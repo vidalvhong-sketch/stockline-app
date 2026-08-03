@@ -34,6 +34,8 @@ const fontDisplay = { fontFamily: "'Space Grotesk', sans-serif" };
 const fontMono = { fontFamily: "'IBM Plex Mono', monospace" };
 const fontBody = { fontFamily: "'Inter', sans-serif" };
 
+const COMMON_UNITS = ["pcs", "kg", "g", "sack", "pack", "box", "ream", "liter", "roll", "dozen", "set", "bottle"];
+
 /* ---------------------------------------------------------------
    HELPERS
 --------------------------------------------------------------- */
@@ -507,7 +509,7 @@ function Dashboard({ products, transactions, suppliers }) {
               {lowStock.map((p) => (
                 <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${T.border}` }}>
                   <span style={{ fontSize: 13, color: T.text }}>{p.name}</span>
-                  <span style={{ ...fontMono, fontSize: 12, color: T.amber }}>{p.stock} left</span>
+                  <span style={{ ...fontMono, fontSize: 12, color: T.amber }}>{p.stock} {p.unit || "pcs"} left</span>
                 </div>
               ))}
             </div>
@@ -538,14 +540,14 @@ function Dashboard({ products, transactions, suppliers }) {
 --------------------------------------------------------------- */
 function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "", price: "", stock: "", barcode: "" });
+  const [form, setForm] = useState({ name: "", category: "", price: "", stock: "", barcode: "", unit: "pcs" });
   const [query, setQuery] = useState("");
 
   function submit(e) {
     e.preventDefault();
     if (!form.name || !form.category || !form.price) return;
     onAdd(form);
-    setForm({ name: "", category: "", price: "", stock: "", barcode: "" });
+    setForm({ name: "", category: "", price: "", stock: "", barcode: "", unit: "pcs" });
     setShowForm(false);
   }
 
@@ -564,10 +566,10 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
       {isAdmin && showForm && (
         <Card style={{ marginBottom: 20 }}>
           <form onSubmit={submit}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
               <div>
                 <Label>Product name</Label>
-                <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. A4 Bond Paper (ream)" />
+                <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. A4 Bond Paper" />
               </div>
               <div>
                 <Label>Category</Label>
@@ -575,7 +577,12 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
                 <datalist id="cat-list">{categories.map((c) => <option key={c} value={c} />)}</datalist>
               </div>
               <div>
-                <Label>Price</Label>
+                <Label>Unit</Label>
+                <Input required list="unit-list" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="pcs" />
+                <datalist id="unit-list">{COMMON_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
+              </div>
+              <div>
+                <Label>Price per unit</Label>
                 <Input required type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" />
               </div>
               <div>
@@ -601,7 +608,7 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-              {["Barcode", "Product", "Category", "Price", "Stock", "Status", ""].map((h) => (
+              {["Barcode", "Product", "Category", "Unit", "Price", "Stock", "Status", ""].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 16px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
               ))}
             </tr>
@@ -612,8 +619,9 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
                 <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textMuted }}>{p.barcode}</td>
                 <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p.name}</td>
                 <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{p.category}</td>
-                <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{fmtMoney(p.price)}</td>
-                <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: p.stock === 0 ? T.out : p.stock <= 10 ? T.amber : T.text }}>{p.stock}</td>
+                <td style={{ padding: "10px 16px" }}><Badge>{p.unit || "pcs"}</Badge></td>
+                <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{fmtMoney(p.price)}<span style={{ color: T.textFaint }}>/{p.unit || "pcs"}</span></td>
+                <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: p.stock === 0 ? T.out : p.stock <= 10 ? T.amber : T.text }}>{p.stock} {p.unit || "pcs"}</td>
                 <td style={{ padding: "10px 16px" }}><Badge tone={p.status === "active" ? "in" : "out"}>{p.status}</Badge></td>
                 <td style={{ padding: "10px 16px", textAlign: "right" }}>
                   {isAdmin && (
@@ -626,7 +634,7 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No products match.</td></tr>
+              <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No products match.</td></tr>
             )}
           </tbody>
         </table>
@@ -739,11 +747,11 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
               <Label>Product</Label>
               <Select required value={productId} onChange={(e) => setProductId(e.target.value)}>
                 <option value="">Select a product</option>
-                {products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.stock} in stock)</option>)}
+                {products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.stock} {p.unit || "pcs"} in stock)</option>)}
               </Select>
             </div>
             <div>
-              <Label>Quantity</Label>
+              <Label>Quantity{selectedProduct ? ` (${selectedProduct.unit || "pcs"})` : ""}</Label>
               <Input required type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" />
             </div>
             <div>
@@ -810,7 +818,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
                 <tr key={t.id} style={{ borderBottom: `1px solid ${T.border}` }}>
                   <td style={{ padding: "10px 16px" }}><Badge tone={t.type === "IN" ? "in" : "out"}>{t.type}</Badge></td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p ? p.name : "Deleted product"}</td>
-                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{t.qty}</td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{t.qty} {p ? (p.unit || "pcs") : ""}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textMuted }}>{fmtMoney(t.price)}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{s ? s.name : "\u2014"}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{t.staff}</td>
@@ -886,7 +894,7 @@ function BarcodeView({ products, onToggle, isAdmin }) {
               <div style={{ fontSize: 13, color: T.textMuted, marginTop: 2 }}>{match.category}</div>
               <div style={{ display: "flex", gap: 16, marginTop: 10, ...fontMono, fontSize: 13, color: T.text }}>
                 <span>{fmtMoney(match.price)}</span>
-                <span>{match.stock} in stock</span>
+                <span>{match.stock} {match.unit || "pcs"} in stock</span>
                 <Badge tone={match.status === "active" ? "in" : "out"}>{match.status}</Badge>
               </div>
             </div>

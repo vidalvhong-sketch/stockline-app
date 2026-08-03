@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import path from "path";
+import fs from "fs";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
@@ -28,7 +29,9 @@ function verifyPin(pin, stored) {
 }
 
 /* ---------------- DB setup ---------------- */
-const db = new Database(path.join(__dirname, "stockline.db"));
+const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, "stockline.db");
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 
 db.exec(`
@@ -52,7 +55,8 @@ CREATE TABLE IF NOT EXISTS products (
   category TEXT NOT NULL,
   price REAL NOT NULL DEFAULT 0,
   stock INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'active'
+  status TEXT NOT NULL DEFAULT 'active',
+  unit TEXT NOT NULL DEFAULT 'pcs'
 );
 CREATE TABLE IF NOT EXISTS transactions (
   id TEXT PRIMARY KEY,
@@ -65,6 +69,13 @@ CREATE TABLE IF NOT EXISTS transactions (
   timestamp TEXT NOT NULL
 );
 `);
+
+// Migration: add `unit` to databases created before this column existed
+const productCols = db.prepare("PRAGMA table_info(products)").all().map((c) => c.name);
+if (!productCols.includes("unit")) {
+  db.exec("ALTER TABLE products ADD COLUMN unit TEXT NOT NULL DEFAULT 'pcs'");
+  console.log("Migrated products table: added unit column.");
+}
 
 function genId(prefix) {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -91,12 +102,12 @@ if (productCount === 0) {
   supStmt.run(sup1, "Metro Paper Trading", "Ana Reyes", "0917 555 0142");
   supStmt.run(sup2, "Sunrise Electronics Supply", "Ben Cruz", "0918 555 0231");
 
-  const prodStmt = db.prepare("INSERT INTO products (id, barcode, name, category, price, stock, status) VALUES (?,?,?,?,?,?,?)");
+  const prodStmt = db.prepare("INSERT INTO products (id, barcode, name, category, price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?)");
   const p1 = genId("prd"), p2 = genId("prd"), p3 = genId("prd"), p4 = genId("prd");
-  prodStmt.run(p1, genBarcode(), "A4 Bond Paper (ream)", "Office Supplies", 220, 140, "active");
-  prodStmt.run(p2, genBarcode(), "USB Headset", "Electronics", 850, 32, "active");
-  prodStmt.run(p3, genBarcode(), "Ballpoint Pen (box)", "Office Supplies", 95, 4, "active");
-  prodStmt.run(p4, genBarcode(), "Recycled Mailer Box", "Packaging", 18, 0, "stopped");
+  prodStmt.run(p1, genBarcode(), "A4 Bond Paper", "Office Supplies", 220, 140, "active", "ream");
+  prodStmt.run(p2, genBarcode(), "USB Headset", "Electronics", 850, 32, "active", "pcs");
+  prodStmt.run(p3, genBarcode(), "Ballpoint Pen", "Office Supplies", 95, 4, "active", "box");
+  prodStmt.run(p4, genBarcode(), "Rice", "Groceries", 1800, 0, "stopped", "sack");
 
   const txnStmt = db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)");
   const now = Date.now();
@@ -207,13 +218,13 @@ app.post("/api/suppliers", requireAuth, requireAdmin, (req, res) => {
 
 /* ---------------- Products ---------------- */
 app.post("/api/products", requireAuth, requireAdmin, (req, res) => {
-  const { name, category, price, stock, barcode } = req.body || {};
+  const { name, category, price, stock, barcode, unit } = req.body || {};
   if (!name || !category || price === undefined) return res.status(400).json({ error: "Name, category, and price are required" });
   const id = genId("prd");
   const code = (barcode && barcode.trim()) || genBarcode();
   try {
-    db.prepare("INSERT INTO products (id, barcode, name, category, price, stock, status) VALUES (?,?,?,?,?,?,?)")
-      .run(id, code, name, category, Number(price), Number(stock) || 0, "active");
+    db.prepare("INSERT INTO products (id, barcode, name, category, price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?)")
+      .run(id, code, name, category, Number(price), Number(stock) || 0, "active", (unit && unit.trim()) || "pcs");
   } catch (e) {
     return res.status(400).json({ error: "That barcode is already in use" });
   }
