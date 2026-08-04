@@ -321,6 +321,16 @@ export default function App() {
     }
   }
 
+  async function deleteProduct(productId, productName) {
+    try {
+      await api.deleteProduct(productId);
+      setProducts((prev) => prev.filter((p) => p.id !== productId));
+      showToast(`${productName} deleted`, "out");
+    } catch (err) {
+      showToast(err.message, "out");
+    }
+  }
+
   async function logMovement(entry) {
     try {
       const res = await api.logTransaction(entry);
@@ -408,7 +418,7 @@ export default function App() {
         )}
 
         {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} />}
-        {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onToggle={toggleProductStatus} isAdmin={isAdmin} />}
+        {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onToggle={toggleProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} />}
         {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} />}
         {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} />}
         {view === "barcode" && <BarcodeView products={products} onToggle={toggleProductStatus} isAdmin={isAdmin} />}
@@ -538,7 +548,7 @@ function Dashboard({ products, transactions, suppliers }) {
 /* ---------------------------------------------------------------
    PRODUCTS VIEW
 --------------------------------------------------------------- */
-function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
+function ProductsView({ products, categories, onAdd, onToggle, onDelete, isAdmin }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" });
   const [query, setQuery] = useState("");
@@ -644,12 +654,25 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textFaint }}>{p.market_price != null ? fmtMoney(p.market_price) : "\u2014"}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: p.stock === 0 ? T.out : p.stock <= 10 ? T.amber : T.text }}>{p.stock} {p.unit || "pcs"}</td>
                   <td style={{ padding: "10px 16px" }}><Badge tone={p.status === "active" ? "in" : "out"}>{p.status}</Badge></td>
-                  <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                  <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                     {isAdmin && (
-                      <Button variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => onToggle(p.id)}>
-                        {p.status === "active" ? <Ban size={12} /> : <RotateCcw size={12} />}
-                        {p.status === "active" ? "Stop" : "Reactivate"}
-                      </Button>
+                      <>
+                        <Button variant="ghost" style={{ padding: "5px 10px", fontSize: 11, marginRight: 6 }} onClick={() => onToggle(p.id)}>
+                          {p.status === "active" ? <Ban size={12} /> : <RotateCcw size={12} />}
+                          {p.status === "active" ? "Stop" : "Reactivate"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          style={{ padding: "5px 10px", fontSize: 11, color: T.out }}
+                          onClick={() => {
+                            if (window.confirm(`Delete "${p.name}"? This can't be undone. Past movement history will show it as a deleted product instead of being removed.`)) {
+                              onDelete(p.id, p.name);
+                            }
+                          }}
+                        >
+                          <Trash2 size={12} />Delete
+                        </Button>
+                      </>
                     )}
                   </td>
                 </tr>

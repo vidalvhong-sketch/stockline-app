@@ -46,6 +46,7 @@ export const api = {
   addSupplier: (payload) => request("/suppliers", { method: "POST", body: JSON.stringify(payload) }),
   addProduct: (payload) => request("/products", { method: "POST", body: JSON.stringify(payload) }),
   toggleProduct: (id) => request(`/products/${id}/toggle`, { method: "PATCH" }),
+  deleteProduct: (id) => request(`/products/${id}`, { method: "DELETE" }),
   logTransaction: (payload) => request("/transactions", { method: "POST", body: JSON.stringify(payload) }),
   getAgents: () => request("/agents"),
   addAgent: (payload) => request("/agents", { method: "POST", body: JSON.stringify(payload) }),

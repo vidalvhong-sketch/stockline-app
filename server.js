@@ -298,6 +298,13 @@ app.patch("/api/products/:id/toggle", requireAuth, requireAdmin, (req, res) => {
   res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(product.id));
 });
 
+app.delete("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
+  const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  db.prepare("DELETE FROM products WHERE id = ?").run(product.id);
+  res.json({ ok: true, id: product.id });
+});
+
 /* ---------------- Transactions (product in / out) ---------------- */
 app.post("/api/transactions", requireAuth, (req, res) => {
   const { productId, type, qty, staff, supplierId, price, timestamp } = req.body || {};
