@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS products (
   barcode TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
   category TEXT NOT NULL,
-  price REAL NOT NULL DEFAULT 0,
+  purchase_price REAL NOT NULL DEFAULT 0,
+  retail_price REAL NOT NULL DEFAULT 0,
+  market_price REAL,
   stock INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   unit TEXT NOT NULL DEFAULT 'pcs'
@@ -75,6 +77,17 @@ const productCols = db.prepare("PRAGMA table_info(products)").all().map((c) => c
 if (!productCols.includes("unit")) {
   db.exec("ALTER TABLE products ADD COLUMN unit TEXT NOT NULL DEFAULT 'pcs'");
   console.log("Migrated products table: added unit column.");
+}
+
+// Migration: split the old single `price` column into purchase/retail/market pricing
+const hadLegacyPrice = productCols.includes("price");
+const hadPricingColumns = productCols.includes("purchase_price");
+if (!productCols.includes("purchase_price")) db.exec("ALTER TABLE products ADD COLUMN purchase_price REAL NOT NULL DEFAULT 0");
+if (!productCols.includes("retail_price")) db.exec("ALTER TABLE products ADD COLUMN retail_price REAL NOT NULL DEFAULT 0");
+if (!productCols.includes("market_price")) db.exec("ALTER TABLE products ADD COLUMN market_price REAL");
+if (hadLegacyPrice && !hadPricingColumns) {
+  db.exec("UPDATE products SET purchase_price = price, retail_price = price WHERE purchase_price = 0 AND retail_price = 0");
+  console.log("Migrated products table: split price into purchase_price / retail_price / market_price.");
 }
 
 function genId(prefix) {
@@ -102,12 +115,12 @@ if (productCount === 0) {
   supStmt.run(sup1, "Metro Paper Trading", "Ana Reyes", "0917 555 0142");
   supStmt.run(sup2, "Sunrise Electronics Supply", "Ben Cruz", "0918 555 0231");
 
-  const prodStmt = db.prepare("INSERT INTO products (id, barcode, name, category, price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?)");
+  const prodStmt = db.prepare("INSERT INTO products (id, barcode, name, category, purchase_price, retail_price, market_price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?,?,?)");
   const p1 = genId("prd"), p2 = genId("prd"), p3 = genId("prd"), p4 = genId("prd");
-  prodStmt.run(p1, genBarcode(), "A4 Bond Paper", "Office Supplies", 220, 140, "active", "ream");
-  prodStmt.run(p2, genBarcode(), "USB Headset", "Electronics", 850, 32, "active", "pcs");
-  prodStmt.run(p3, genBarcode(), "Ballpoint Pen", "Office Supplies", 95, 4, "active", "box");
-  prodStmt.run(p4, genBarcode(), "Rice", "Groceries", 1800, 0, "stopped", "sack");
+  prodStmt.run(p1, genBarcode(), "A4 Bond Paper", "Office Supplies", 180, 220, 240, 140, "active", "ream");
+  prodStmt.run(p2, genBarcode(), "USB Headset", "Electronics", 650, 850, 950, 32, "active", "pcs");
+  prodStmt.run(p3, genBarcode(), "Ballpoint Pen", "Office Supplies", 70, 95, 110, 4, "active", "box");
+  prodStmt.run(p4, genBarcode(), "Rice", "Groceries", 1500, 1800, 1900, 0, "stopped", "sack");
 
   const txnStmt = db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)");
   const now = Date.now();
@@ -218,13 +231,16 @@ app.post("/api/suppliers", requireAuth, requireAdmin, (req, res) => {
 
 /* ---------------- Products ---------------- */
 app.post("/api/products", requireAuth, requireAdmin, (req, res) => {
-  const { name, category, price, stock, barcode, unit } = req.body || {};
-  if (!name || !category || price === undefined) return res.status(400).json({ error: "Name, category, and price are required" });
+  const { name, category, stock, barcode, unit, purchasePrice, retailPrice, marketPrice } = req.body || {};
+  if (!name || !category || purchasePrice === undefined || retailPrice === undefined) {
+    return res.status(400).json({ error: "Name, category, purchase price, and retail price are required" });
+  }
   const id = genId("prd");
   const code = (barcode && barcode.trim()) || genBarcode();
+  const hasMarket = marketPrice !== undefined && marketPrice !== null && String(marketPrice).trim() !== "";
   try {
-    db.prepare("INSERT INTO products (id, barcode, name, category, price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?)")
-      .run(id, code, name, category, Number(price), Number(stock) || 0, "active", (unit && unit.trim()) || "pcs");
+    db.prepare("INSERT INTO products (id, barcode, name, category, purchase_price, retail_price, market_price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .run(id, code, name, category, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, Number(stock) || 0, "active", (unit && unit.trim()) || "pcs");
   } catch (e) {
     return res.status(400).json({ error: "That barcode is already in use" });
   }
@@ -251,7 +267,7 @@ app.post("/api/transactions", requireAuth, (req, res) => {
   }
   const id = genId("txn");
   const ts = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
-  const unitPrice = price !== undefined ? Number(price) : product.price;
+  const unitPrice = price !== undefined && price !== "" ? Number(price) : (type === "IN" ? product.purchase_price : product.retail_price);
   db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)")
     .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, ts);
   const newStock = type === "IN" ? product.stock + quantity : product.stock - quantity;

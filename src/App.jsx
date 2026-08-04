@@ -540,14 +540,14 @@ function Dashboard({ products, transactions, suppliers }) {
 --------------------------------------------------------------- */
 function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "", price: "", stock: "", barcode: "", unit: "pcs" });
+  const [form, setForm] = useState({ name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" });
   const [query, setQuery] = useState("");
 
   function submit(e) {
     e.preventDefault();
-    if (!form.name || !form.category || !form.price) return;
+    if (!form.name || !form.category || !form.purchasePrice || !form.retailPrice) return;
     onAdd(form);
-    setForm({ name: "", category: "", price: "", stock: "", barcode: "", unit: "pcs" });
+    setForm({ name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" });
     setShowForm(false);
   }
 
@@ -566,7 +566,7 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
       {isAdmin && showForm && (
         <Card style={{ marginBottom: 20 }}>
           <form onSubmit={submit}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
               <div>
                 <Label>Product name</Label>
                 <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. A4 Bond Paper" />
@@ -581,9 +581,19 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
                 <Input required list="unit-list" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="pcs" />
                 <datalist id="unit-list">{COMMON_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
               </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
               <div>
-                <Label>Price per unit</Label>
-                <Input required type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" />
+                <Label>Purchase price (from supplier)</Label>
+                <Input required type="number" step="0.01" min="0" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} placeholder="0.00" />
+              </div>
+              <div>
+                <Label>Retail price (you sell at)</Label>
+                <Input required type="number" step="0.01" min="0" value={form.retailPrice} onChange={(e) => setForm({ ...form, retailPrice: e.target.value })} placeholder="0.00" />
+              </div>
+              <div>
+                <Label>Outside market price (optional)</Label>
+                <Input type="number" step="0.01" min="0" value={form.marketPrice} onChange={(e) => setForm({ ...form, marketPrice: e.target.value })} placeholder="0.00" />
               </div>
               <div>
                 <Label>Starting stock</Label>
@@ -605,39 +615,52 @@ function ProductsView({ products, categories, onAdd, onToggle, isAdmin }) {
       </div>
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-              {["Barcode", "Product", "Category", "Unit", "Price", "Stock", "Status", ""].map((h) => (
-                <th key={h} style={{ textAlign: "left", padding: "10px 16px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
+              {["Barcode", "Product", "Category", "Unit", "Cost (supplier)", "Retail", "Market", "Stock", "Status", ""].map((h) => (
+                <th key={h} style={{ textAlign: "left", padding: "10px 16px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {filtered.map((p) => (
-              <tr key={p.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textMuted }}>{p.barcode}</td>
-                <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p.name}</td>
-                <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{p.category}</td>
-                <td style={{ padding: "10px 16px" }}><Badge>{p.unit || "pcs"}</Badge></td>
-                <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{fmtMoney(p.price)}<span style={{ color: T.textFaint }}>/{p.unit || "pcs"}</span></td>
-                <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: p.stock === 0 ? T.out : p.stock <= 10 ? T.amber : T.text }}>{p.stock} {p.unit || "pcs"}</td>
-                <td style={{ padding: "10px 16px" }}><Badge tone={p.status === "active" ? "in" : "out"}>{p.status}</Badge></td>
-                <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                  {isAdmin && (
-                    <Button variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => onToggle(p.id)}>
-                      {p.status === "active" ? <Ban size={12} /> : <RotateCcw size={12} />}
-                      {p.status === "active" ? "Stop" : "Reactivate"}
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {filtered.map((p) => {
+              const margin = p.retail_price - p.purchase_price;
+              const marginPct = p.purchase_price > 0 ? (margin / p.purchase_price) * 100 : null;
+              return (
+                <tr key={p.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textMuted }}>{p.barcode}</td>
+                  <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p.name}</td>
+                  <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{p.category}</td>
+                  <td style={{ padding: "10px 16px" }}><Badge>{p.unit || "pcs"}</Badge></td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textMuted }}>{fmtMoney(p.purchase_price)}</td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>
+                    {fmtMoney(p.retail_price)}
+                    {marginPct !== null && (
+                      <div style={{ fontSize: 10, color: margin >= 0 ? T.in : T.out, marginTop: 2 }}>{margin >= 0 ? "+" : ""}{marginPct.toFixed(0)}% margin</div>
+                    )}
+                  </td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textFaint }}>{p.market_price != null ? fmtMoney(p.market_price) : "\u2014"}</td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: p.stock === 0 ? T.out : p.stock <= 10 ? T.amber : T.text }}>{p.stock} {p.unit || "pcs"}</td>
+                  <td style={{ padding: "10px 16px" }}><Badge tone={p.status === "active" ? "in" : "out"}>{p.status}</Badge></td>
+                  <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                    {isAdmin && (
+                      <Button variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => onToggle(p.id)}>
+                        {p.status === "active" ? <Ban size={12} /> : <RotateCcw size={12} />}
+                        {p.status === "active" ? "Stop" : "Reactivate"}
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
             {filtered.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No products match.</td></tr>
+              <tr><td colSpan={10} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No products match.</td></tr>
             )}
           </tbody>
         </table>
+        </div>
       </Card>
     </div>
   );
@@ -718,7 +741,9 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
 
   const selectedProduct = products.find((p) => p.id === productId);
 
-  useEffect(() => { if (selectedProduct) setPrice(selectedProduct.price); }, [productId]);
+  useEffect(() => {
+    if (selectedProduct) setPrice(type === "IN" ? selectedProduct.purchase_price : selectedProduct.retail_price);
+  }, [productId, type]);
 
   async function submit(e) {
     e.preventDefault();
@@ -755,7 +780,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
               <Input required type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" />
             </div>
             <div>
-              <Label>Unit price</Label>
+              <Label>{type === "IN" ? "Purchase price (from supplier)" : "Retail price (selling)"}</Label>
               <Input type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
             </div>
           </div>
@@ -893,7 +918,8 @@ function BarcodeView({ products, onToggle, isAdmin }) {
               <div style={{ ...fontDisplay, fontSize: 18, fontWeight: 700, color: T.text }}>{match.name}</div>
               <div style={{ fontSize: 13, color: T.textMuted, marginTop: 2 }}>{match.category}</div>
               <div style={{ display: "flex", gap: 16, marginTop: 10, ...fontMono, fontSize: 13, color: T.text }}>
-                <span>{fmtMoney(match.price)}</span>
+                <span>{fmtMoney(match.retail_price)} <span style={{ color: T.textFaint, fontSize: 11 }}>retail</span></span>
+                <span style={{ color: T.textFaint }}>{fmtMoney(match.purchase_price)} <span style={{ fontSize: 11 }}>cost</span></span>
                 <span>{match.stock} {match.unit || "pcs"} in stock</span>
                 <Badge tone={match.status === "active" ? "in" : "out"}>{match.status}</Badge>
               </div>
