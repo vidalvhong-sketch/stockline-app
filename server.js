@@ -32,7 +32,22 @@ function verifyPin(pin, stored) {
 const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, "stockline.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
+// DELETE (not WAL) journal mode: every commit writes straight into the main
+// .db file. WAL mode defers writes into a separate .db-wal file that only
+// gets folded back in on a clean checkpoint/close — on platforms like
+// Railway that SIGTERM the container on redeploy, that checkpoint may never
+// happen, silently losing data. DELETE mode trades a little write throughput
+// (irrelevant at this app's scale) for writes that are durable immediately.
+db.pragma("journal_mode = DELETE");
+db.pragma("synchronous = FULL");
+
+// Belt-and-suspenders: close the DB cleanly on shutdown signals too.
+function shutdown() {
+  try { db.close(); } catch {}
+  process.exit(0);
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS agents (
