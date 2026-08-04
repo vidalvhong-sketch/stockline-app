@@ -31,15 +31,50 @@ function verifyPin(pin, stored) {
 /* ---------------- DB setup ---------------- */
 const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, "stockline.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-const db = new Database(DB_PATH);
-// DELETE (not WAL) journal mode: every commit writes straight into the main
-// .db file. WAL mode defers writes into a separate .db-wal file that only
-// gets folded back in on a clean checkpoint/close — on platforms like
-// Railway that SIGTERM the container on redeploy, that checkpoint may never
-// happen, silently losing data. DELETE mode trades a little write throughput
-// (irrelevant at this app's scale) for writes that are durable immediately.
-db.pragma("journal_mode = DELETE");
-db.pragma("synchronous = FULL");
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function openAndPrepare(dbPath) {
+  const conn = new Database(dbPath);
+  // DELETE (not WAL) journal mode: every commit writes straight into the main
+  // .db file, with no separate .db-wal file that only gets folded back in on
+  // a clean checkpoint/close — on platforms that SIGTERM the container on
+  // redeploy, that checkpoint may never happen, silently losing data.
+  conn.pragma("journal_mode = DELETE");
+  conn.pragma("synchronous = FULL");
+  conn.exec(`CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    pin_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT NOT NULL
+  )`);
+  return conn;
+}
+
+// On platforms like Railway, a redeployed container can start running before
+// the previous container has released its lock on a mounted volume — the
+// new container briefly sees an empty local path at the mount point instead
+// of the real persistent data. A single open() at that moment "sees" an
+// empty database and would wrongly reseed. Fix: if a fresh connection finds
+// zero agents (meaning either genuinely first boot, or the volume hasn't
+// landed yet), close it and open an entirely new connection — a fresh
+// open() always resolves through whatever is *currently* mounted at the
+// path, so once the real volume lands, a retry will see the real data. Only
+// give up and treat it as a true first boot after several retries.
+let db = openAndPrepare(DB_PATH);
+if (process.env.DATABASE_PATH) {
+  const maxRetries = 10;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const agentCount = db.prepare("SELECT COUNT(*) AS c FROM agents").get().c;
+    if (agentCount > 0) break;
+    db.close();
+    sleepSync(300);
+    db = openAndPrepare(DB_PATH);
+  }
+}
 
 // Belt-and-suspenders: close the DB cleanly on shutdown signals too.
 function shutdown() {
@@ -50,13 +85,6 @@ process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS agents (
-  id TEXT PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  pin_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'user',
-  created_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS suppliers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
