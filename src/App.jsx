@@ -5,32 +5,88 @@ import {
 import {
   LayoutDashboard, Package, Truck, ArrowLeftRight, ScanBarcode, Plus, X,
   ArrowDownToLine, ArrowUpFromLine, Ban, RotateCcw, Search, AlertTriangle, CheckCircle2, LogOut,
-  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus,
+  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette,
 } from "lucide-react";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
 
 /* ---------------------------------------------------------------
-   THEME — "warehouse control panel"
+   THEME — "warehouse control panel", with 5 selectable palettes
 --------------------------------------------------------------- */
-const T = {
-  bg: "#141A22",
-  surface: "#1B2330",
-  surfaceRaised: "#232C3B",
-  surfaceInput: "#1A212C",
-  border: "#2E3948",
-  borderStrong: "#3D4B5E",
-  amber: "#F2B705",
-  amberDim: "#8A6A0C",
-  in: "#3FC79A",
-  inDim: "#1E5C46",
-  out: "#E8604C",
-  outDim: "#6E2B21",
-  waste: "#A87C5A",
-  wasteDim: "#4A3826",
-  text: "#EDEFF2",
-  textMuted: "#8B96A5",
-  textFaint: "#5A6473",
+const THEMES = {
+  black: {
+    bg: "#141A22", surface: "#1B2330", surfaceRaised: "#232C3B", surfaceInput: "#1A212C",
+    border: "#2E3948", borderStrong: "#3D4B5E",
+    amber: "#F2B705", amberDim: "#8A6A0C", amberText: "#FBE29B",
+    in: "#3FC79A", inDim: "#1E5C46", inText: "#B7F0DD",
+    out: "#E8604C", outDim: "#6E2B21", outText: "#F6C4BA",
+    waste: "#A87C5A", wasteDim: "#4A3826", wasteText: "#E4D0BA",
+    text: "#EDEFF2", textMuted: "#8B96A5", textFaint: "#5A6473",
+    mode: "dark",
+  },
+  white: {
+    bg: "#F4F5F7", surface: "#FFFFFF", surfaceRaised: "#EEF0F3", surfaceInput: "#FFFFFF",
+    border: "#DCE0E5", borderStrong: "#C0C6CE",
+    amber: "#B8860B", amberDim: "#FBE8B0", amberText: "#6B4E06",
+    in: "#1E9C6C", inDim: "#D7F3E8", inText: "#0F5C3F",
+    out: "#D14D37", outDim: "#FBDDD6", outText: "#7A281B",
+    waste: "#8A6440", wasteDim: "#EFE1D2", wasteText: "#5A4128",
+    text: "#1B2330", textMuted: "#5A6473", textFaint: "#8B96A5",
+    mode: "light",
+  },
+  green: {
+    bg: "#0F1B14", surface: "#16261C", surfaceRaised: "#1E3327", surfaceInput: "#132018",
+    border: "#2A4232", borderStrong: "#3B5A45",
+    amber: "#F2B705", amberDim: "#8A6A0C", amberText: "#FBE29B",
+    in: "#3FC79A", inDim: "#1E5C46", inText: "#B7F0DD",
+    out: "#E8604C", outDim: "#6E2B21", outText: "#F6C4BA",
+    waste: "#A87C5A", wasteDim: "#4A3826", wasteText: "#E4D0BA",
+    text: "#E8F2EB", textMuted: "#8FAB98", textFaint: "#5C7A67",
+    mode: "dark",
+  },
+  pink: {
+    bg: "#FFF3F6", surface: "#FFFFFF", surfaceRaised: "#FDE9EF", surfaceInput: "#FFFFFF",
+    border: "#F5CFDC", borderStrong: "#E8A9C0",
+    amber: "#C9910A", amberDim: "#FCE8B0", amberText: "#6B4E06",
+    in: "#1E9C6C", inDim: "#D7F3E8", inText: "#0F5C3F",
+    out: "#D14D37", outDim: "#FBDDD6", outText: "#7A281B",
+    waste: "#8A6440", wasteDim: "#EFE1D2", wasteText: "#5A4128",
+    text: "#3B1F2B", textMuted: "#8A5A6E", textFaint: "#B98CA0",
+    mode: "light",
+  },
+  blue: {
+    bg: "#F0F6FC", surface: "#FFFFFF", surfaceRaised: "#E4EEF8", surfaceInput: "#FFFFFF",
+    border: "#C9DCEE", borderStrong: "#A9C6E0",
+    amber: "#C9910A", amberDim: "#FCE8B0", amberText: "#6B4E06",
+    in: "#1E9C6C", inDim: "#D7F3E8", inText: "#0F5C3F",
+    out: "#D14D37", outDim: "#FBDDD6", outText: "#7A281B",
+    waste: "#8A6440", wasteDim: "#EFE1D2", wasteText: "#5A4128",
+    text: "#1B2E3D", textMuted: "#5A7285", textFaint: "#8FA6B8",
+    mode: "light",
+  },
 };
+
+const THEME_ORDER = ["black", "white", "green", "pink", "blue"];
+const THEME_LABELS = { black: "Black", white: "White", green: "Green", pink: "Light pink", blue: "Light blue" };
+const THEME_SWATCH = { black: "#141A22", white: "#FFFFFF", green: "#16261C", pink: "#FFD3E2", blue: "#CFE6FB" };
+
+// A single mutable palette object that every component reads from at render
+// time. The App component re-applies the selected theme's values onto this
+// object at the top of every render (before returning JSX), so switching
+// themes just means updating a bit of state in App and letting React's
+// normal render pass pick up the new colors everywhere.
+const T = { ...THEMES.black };
+
+const THEME_STORAGE_KEY = "stockline_theme";
+function getSavedTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved && THEMES[saved]) return saved;
+  } catch {}
+  return "black";
+}
+function saveTheme(key) {
+  try { localStorage.setItem(THEME_STORAGE_KEY, key); } catch {}
+}
 
 const fontDisplay = { fontFamily: "'Space Grotesk', sans-serif" };
 const fontMono = { fontFamily: "'IBM Plex Mono', monospace" };
@@ -191,10 +247,10 @@ function Button({ children, onClick, variant = "default", type = "button", style
 function Badge({ children, tone = "default" }) {
   const tones = {
     default: { bg: T.surfaceRaised, fg: T.textMuted, bd: T.border },
-    in: { bg: T.inDim, fg: "#B7F0DD", bd: T.in },
-    out: { bg: T.outDim, fg: "#F6C4BA", bd: T.out },
-    amber: { bg: T.amberDim, fg: "#FBE29B", bd: T.amber },
-    waste: { bg: T.wasteDim, fg: "#E4D0BA", bd: T.waste },
+    in: { bg: T.inDim, fg: T.inText, bd: T.in },
+    out: { bg: T.outDim, fg: T.outText, bd: T.out },
+    amber: { bg: T.amberDim, fg: T.amberText, bd: T.amber },
+    waste: { bg: T.wasteDim, fg: T.wasteText, bd: T.waste },
   };
   const c = tones[tone];
   return (
@@ -203,6 +259,56 @@ function Badge({ children, tone = "default" }) {
     </span>
   );
 }
+function ThemeSwitcher({ themeKey, onChange, direction = "up", compact = false, align = "left" }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      {compact ? (
+        <button onClick={() => setOpen((o) => !o)} style={{ background: "transparent", border: "none", color: T.textMuted, padding: 6, cursor: "pointer", display: "flex" }}>
+          <Palette size={16} />
+        </button>
+      ) : (
+        <Button
+          variant="ghost"
+          style={{ fontSize: 12, padding: "6px 10px", width: "100%", justifyContent: "center" }}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <Palette size={13} />Theme
+        </Button>
+      )}
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+          <div style={{
+            position: "absolute", minWidth: 170, zIndex: 41,
+            ...(align === "left" ? { left: 0 } : { right: 0 }),
+            ...(direction === "up" ? { bottom: "110%", marginBottom: 6 } : { top: "110%", marginTop: 6 }),
+            background: T.surfaceRaised, border: `1px solid ${T.borderStrong}`, borderRadius: 6, padding: 8,
+            boxShadow: "0 10px 28px rgba(0,0,0,0.45)", display: "flex", flexDirection: "column", gap: 3,
+          }}>
+            {THEME_ORDER.map((key) => (
+              <button
+                key={key}
+                onClick={() => { onChange(key); setOpen(false); }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", borderRadius: 4,
+                  background: themeKey === key ? T.surface : "transparent",
+                  border: `1px solid ${themeKey === key ? T.borderStrong : "transparent"}`,
+                  cursor: "pointer", fontSize: 12, color: T.text, ...fontBody, textAlign: "left",
+                }}
+              >
+                <span style={{ width: 14, height: 14, borderRadius: "50%", background: THEME_SWATCH[key], border: `1px solid ${T.border}`, flexShrink: 0 }} />
+                {THEME_LABELS[key]}
+                {themeKey === key && <CheckCircle2 size={12} color={T.amber} style={{ marginLeft: "auto" }} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SectionHeader({ eyebrow, title, action }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
@@ -285,7 +391,7 @@ function DangerZoneCard({ onPurgeBefore }) {
 /* ---------------------------------------------------------------
    LOGIN
 --------------------------------------------------------------- */
-function Login({ onLoggedIn }) {
+function Login({ onLoggedIn, themeKey, applyTheme }) {
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
@@ -307,7 +413,12 @@ function Login({ onLoggedIn }) {
   }
 
   return (
-    <div style={{ background: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", ...fontBody }}>
+    <div style={{ background: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", position: "relative", ...fontBody }}>
+      {applyTheme && (
+        <div style={{ position: "absolute", top: 20, right: 20, width: 140 }}>
+          <ThemeSwitcher themeKey={themeKey} onChange={applyTheme} direction="down" align="right" />
+        </div>
+      )}
       <form onSubmit={submit} style={{ width: "100%", maxWidth: 320, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: 28, boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <ScanBarcode size={20} color={T.amber} />
@@ -340,6 +451,13 @@ function Login({ onLoggedIn }) {
    MAIN APP
 --------------------------------------------------------------- */
 export default function App() {
+  const [themeKey, setThemeKey] = useState(getSavedTheme);
+  Object.assign(T, THEMES[themeKey]); // apply before this render's JSX (and all children) read T.*
+  function applyTheme(key) {
+    setThemeKey(key);
+    saveTheme(key);
+  }
+
   const [agentName, setAgentName] = useState(getToken() ? getAgentName() : null);
   const [role, setRole] = useState(getToken() ? getAgentRole() : null);
   const [ready, setReady] = useState(false);
@@ -477,7 +595,7 @@ export default function App() {
   const isMobile = useIsMobile();
 
   if (!agentName) {
-    return <Login onLoggedIn={setAgentName} />;
+    return <Login onLoggedIn={setAgentName} themeKey={themeKey} applyTheme={applyTheme} />;
   }
 
   if (!ready) {
@@ -532,6 +650,7 @@ export default function App() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <Badge tone={isAdmin ? "amber" : "default"}>{agentName}</Badge>
+            <ThemeSwitcher themeKey={themeKey} onChange={applyTheme} direction="down" align="right" compact />
             <button onClick={logout} style={{ background: "transparent", border: "none", color: T.textMuted, padding: 6, cursor: "pointer", display: "flex" }}>
               <LogOut size={16} />
             </button>
@@ -605,6 +724,9 @@ export default function App() {
           <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 14, marginTop: 14 }}>
             <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 4 }}>Signed in as <span style={{ color: T.text }}>{agentName}</span></div>
             <div style={{ marginBottom: 8 }}><Badge tone={isAdmin ? "amber" : "default"}>{role || "user"}</Badge></div>
+            <div style={{ marginBottom: 6 }}>
+              <ThemeSwitcher themeKey={themeKey} onChange={applyTheme} direction="up" />
+            </div>
             <Button variant="ghost" style={{ fontSize: 12, padding: "6px 10px", width: "100%", justifyContent: "center" }} onClick={logout}>
               <LogOut size={13} />Sign out
             </Button>
