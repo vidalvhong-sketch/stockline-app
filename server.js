@@ -335,6 +335,15 @@ app.post("/api/transactions", requireAuth, (req, res) => {
   });
 });
 
+app.delete("/api/transactions", requireAuth, requireAdmin, (req, res) => {
+  const { before } = req.query;
+  if (!before) return res.status(400).json({ error: "A cutoff date is required" });
+  const cutoff = new Date(before);
+  if (isNaN(cutoff.getTime())) return res.status(400).json({ error: "Invalid date" });
+  const result = db.prepare("DELETE FROM transactions WHERE timestamp < ?").run(cutoff.toISOString());
+  res.json({ ok: true, deleted: result.changes });
+});
+
 /* ---------------- Static frontend ---------------- */
 app.use(express.static(path.join(__dirname, "dist")));
 app.get("*", (req, res) => {

@@ -47,6 +47,7 @@ export const api = {
   addProduct: (payload) => request("/products", { method: "POST", body: JSON.stringify(payload) }),
   setProductStatus: (id, status) => request(`/products/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: "DELETE" }),
+  purgeTransactionsBefore: (dateStr) => request(`/transactions?before=${encodeURIComponent(dateStr)}`, { method: "DELETE" }),
   logTransaction: (payload) => request("/transactions", { method: "POST", body: JSON.stringify(payload) }),
   getAgents: () => request("/agents"),
   addAgent: (payload) => request("/agents", { method: "POST", body: JSON.stringify(payload) }),
