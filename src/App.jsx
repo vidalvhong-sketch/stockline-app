@@ -816,6 +816,8 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
   const [price, setPrice] = useState("");
   const [timestamp, setTimestamp] = useState("");
   const [filterType, setFilterType] = useState("ALL");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const selectedProduct = products.find((p) => p.id === productId);
 
@@ -833,7 +835,13 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
     if (ok !== false) { setQty(""); setSupplierId(""); setTimestamp(""); }
   }
 
-  const filteredTxns = transactions.filter((t) => filterType === "ALL" || t.type === filterType);
+  const filteredTxns = transactions.filter((t) => {
+    if (filterType !== "ALL" && t.type !== filterType) return false;
+    const tTime = new Date(t.timestamp).getTime();
+    if (dateFrom && tTime < new Date(dateFrom + "T00:00:00").getTime()) return false;
+    if (dateTo && tTime > new Date(dateTo + "T23:59:59.999").getTime()) return false;
+    return true;
+  });
 
   const typeLabels = {
     IN: { verb: "Received by", action: "Log stock in", button: "in" },
@@ -895,21 +903,45 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
         </form>
       </Card>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <Label>History</Label>
-        <div style={{ display: "flex", gap: 6 }}>
-          {["ALL", "IN", "OUT", "DISCARD"].map((f) => (
-            <button key={f} onClick={() => setFilterType(f)} style={{
-              ...fontMono, fontSize: 11, padding: "5px 10px", borderRadius: 3, cursor: "pointer",
-              background: filterType === f ? T.surfaceRaised : "transparent",
-              color: filterType === f ? T.text : T.textFaint,
-              border: `1px solid ${filterType === f ? T.borderStrong : T.border}`,
-            }}>
-              {f}
-            </button>
-          ))}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <Label>History</Label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {["ALL", "IN", "OUT", "DISCARD"].map((f) => (
+              <button key={f} onClick={() => setFilterType(f)} style={{
+                ...fontMono, fontSize: 11, padding: "5px 10px", borderRadius: 3, cursor: "pointer",
+                background: filterType === f ? T.surfaceRaised : "transparent",
+                color: filterType === f ? T.text : T.textFaint,
+                border: `1px solid ${filterType === f ? T.borderStrong : T.border}`,
+              }}>
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <Label>From</Label>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ width: 150 }} />
+          </div>
+          <div>
+            <Label>To</Label>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ width: 150 }} />
+          </div>
+          {(dateFrom || dateTo) && (
+            <Button variant="ghost" style={{ padding: "9px 12px", fontSize: 12 }} onClick={() => { setDateFrom(""); setDateTo(""); }}>
+              <X size={12} />Clear
+            </Button>
+          )}
         </div>
       </div>
+
+      {(dateFrom || dateTo) && (
+        <div style={{ fontSize: 12, color: T.textFaint, marginBottom: 10 }}>
+          Showing {filteredTxns.length} {filteredTxns.length === 1 ? "entry" : "entries"}
+          {dateFrom ? ` from ${dateFrom}` : ""}{dateTo ? ` to ${dateTo}` : ""}
+        </div>
+      )}
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
