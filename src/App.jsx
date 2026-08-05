@@ -487,28 +487,62 @@ function Dashboard({ products, transactions, suppliers }) {
 
   const findProduct = (t) => products.find((pp) => pp.id === (t.product_id || t.productId));
 
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  const thisMonthStr = today.toISOString().slice(0, 7);
+  const thisYearStr = String(today.getFullYear());
+
+  const [statsMode, setStatsMode] = useState("all"); // all | day | month | year
+  const [statsDay, setStatsDay] = useState(todayStr);
+  const [statsMonth, setStatsMonth] = useState(thisMonthStr);
+  const [statsYear, setStatsYear] = useState(thisYearStr);
+
+  const availableYears = useMemo(() => {
+    const years = new Set(transactions.map((t) => String(new Date(t.timestamp).getFullYear())));
+    years.add(thisYearStr);
+    return [...years].sort((a, b) => b - a);
+  }, [transactions]);
+
+  const periodTransactions = useMemo(() => {
+    if (statsMode === "all") return transactions;
+    return transactions.filter((t) => {
+      const d = new Date(t.timestamp);
+      if (statsMode === "day") return d.toISOString().slice(0, 10) === statsDay;
+      if (statsMode === "month") return d.toISOString().slice(0, 7) === statsMonth;
+      if (statsMode === "year") return String(d.getFullYear()) === statsYear;
+      return true;
+    });
+  }, [transactions, statsMode, statsDay, statsMonth, statsYear]);
+
+  const periodLabelText = useMemo(() => {
+    if (statsMode === "all") return "All time";
+    if (statsMode === "day") return new Date(statsDay + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
+    if (statsMode === "month") return new Date(statsMonth + "-01T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long" });
+    return statsYear;
+  }, [statsMode, statsDay, statsMonth, statsYear]);
+
   const totalCostFromSuppliers = useMemo(
-    () => transactions.filter((t) => t.type === "IN").reduce((s, t) => s + t.price * t.qty, 0),
-    [transactions]
+    () => periodTransactions.filter((t) => t.type === "IN").reduce((s, t) => s + t.price * t.qty, 0),
+    [periodTransactions]
   );
   const totalRetailSales = useMemo(
-    () => transactions.filter((t) => t.type === "OUT").reduce((s, t) => s + t.price * t.qty, 0),
-    [transactions]
+    () => periodTransactions.filter((t) => t.type === "OUT").reduce((s, t) => s + t.price * t.qty, 0),
+    [periodTransactions]
   );
   const totalMarketSales = useMemo(
-    () => transactions.filter((t) => t.type === "OUT").reduce((s, t) => {
+    () => periodTransactions.filter((t) => t.type === "OUT").reduce((s, t) => {
       const p = findProduct(t);
       return s + (p && p.market_price != null ? p.market_price * t.qty : 0);
     }, 0),
-    [transactions, products]
+    [periodTransactions, products]
   );
   const totalDiscarded = useMemo(
-    () => transactions.filter((t) => t.type === "DISCARD").reduce((s, t) => s + t.price * t.qty, 0),
-    [transactions]
+    () => periodTransactions.filter((t) => t.type === "DISCARD").reduce((s, t) => s + t.price * t.qty, 0),
+    [periodTransactions]
   );
 
   const stats = [
-    { label: "Total stock units", value: totalStockUnits.toLocaleString(), plain: true },
+    { label: "Total stock units", value: totalStockUnits.toLocaleString(), plain: true, alwaysCurrent: true },
     { label: "Cost from suppliers", value: fmtMoney(totalCostFromSuppliers) },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
     { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
@@ -518,11 +552,44 @@ function Dashboard({ products, transactions, suppliers }) {
   return (
     <div>
       <SectionHeader eyebrow="Overview" title="Inventory dashboard" />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          {["all", "day", "month", "year"].map((m) => (
+            <button key={m} onClick={() => setStatsMode(m)} style={{
+              ...fontMono, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em",
+              padding: "6px 12px", borderRadius: 3, cursor: "pointer",
+              background: statsMode === m ? T.amber : "transparent",
+              color: statsMode === m ? "#241B02" : T.textMuted,
+              border: `1px solid ${statsMode === m ? T.amber : T.border}`,
+            }}>
+              {m === "all" ? "All time" : m}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {statsMode === "day" && (
+            <Input type="date" value={statsDay} onChange={(e) => setStatsDay(e.target.value)} style={{ width: 160 }} />
+          )}
+          {statsMode === "month" && (
+            <Input type="month" value={statsMonth} onChange={(e) => setStatsMonth(e.target.value)} style={{ width: 160 }} />
+          )}
+          {statsMode === "year" && (
+            <Select value={statsYear} onChange={(e) => setStatsYear(e.target.value)} style={{ width: 120 }}>
+              {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
+            </Select>
+          )}
+          <span style={{ ...fontMono, fontSize: 11, color: T.textFaint }}>Showing: {periodLabelText}</span>
+        </div>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 24 }}>
         {stats.map((s) => (
           <Card key={s.label} style={{ padding: 16 }}>
             <Label>{s.label}</Label>
             <div style={{ ...fontDisplay, fontSize: s.plain ? 26 : 22, fontWeight: 700, color: s.warn ? T.waste : T.text }}>{s.value}</div>
+            {s.alwaysCurrent && statsMode !== "all" && (
+              <div style={{ fontSize: 10, color: T.textFaint, marginTop: 4 }}>current, not filtered by period</div>
+            )}
           </Card>
         ))}
       </div>
