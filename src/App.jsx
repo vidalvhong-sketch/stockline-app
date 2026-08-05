@@ -73,7 +73,8 @@ function movementTone(type) {
 --------------------------------------------------------------- */
 function fmtMoney(n) {
   const v = Number(n) || 0;
-  return "\u20B1" + v.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const sign = v < 0 ? "-" : "";
+  return sign + "\u20B1" + Math.abs(v).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function fmtDateTime(iso) {
   const d = new Date(iso);
@@ -695,9 +696,12 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
     [periodTransactions]
   );
 
+  const totalNetSales = totalRetailSales - totalStockCostValue;
+
   const stats = [
     { label: "Stock cost (supplier rate)", value: fmtMoney(totalStockCostValue), alwaysCurrent: true },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
+    { label: "Net sales (sales \u2212 stock cost)", value: fmtMoney(totalNetSales), negative: totalNetSales < 0, mixedPeriod: true },
     { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
     { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
   ];
@@ -739,9 +743,12 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
         {stats.map((s) => (
           <Card key={s.label} style={{ padding: 16 }}>
             <Label>{s.label}</Label>
-            <div style={{ ...fontDisplay, fontSize: s.plain ? 26 : 22, fontWeight: 700, color: s.warn ? T.waste : T.text }}>{s.value}</div>
+            <div style={{ ...fontDisplay, fontSize: s.plain ? 26 : 22, fontWeight: 700, color: s.negative ? T.out : s.warn ? T.waste : T.text }}>{s.value}</div>
             {s.alwaysCurrent && statsMode !== "all" && (
               <div style={{ fontSize: 10, color: T.textFaint, marginTop: 4 }}>current, not filtered by period</div>
+            )}
+            {s.mixedPeriod && statsMode !== "all" && (
+              <div style={{ fontSize: 10, color: T.textFaint, marginTop: 4 }}>sales for this period, stock cost is current</div>
             )}
           </Card>
         ))}
