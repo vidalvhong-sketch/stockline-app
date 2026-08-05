@@ -867,7 +867,7 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
       purchasePrice: String(p.purchase_price),
       retailPrice: String(p.retail_price),
       marketPrice: p.market_price != null ? String(p.market_price) : "",
-      stock: "",
+      stock: String(p.stock),
       barcode: p.barcode,
     });
     setShowForm(true);
@@ -929,7 +929,7 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
                 <datalist id="unit-list">{COMMON_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, editingId ? "1fr 1fr 1fr" : "1fr 1fr 1fr 1fr"), gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "1fr 1fr 1fr 1fr"), gap: 12, marginBottom: 12 }}>
               <div>
                 <Label>Purchase price (from supplier)</Label>
                 <Input required type="number" step="0.01" min="0" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} placeholder="0.00" />
@@ -942,12 +942,10 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
                 <Label>Outside market price (optional)</Label>
                 <Input type="number" step="0.01" min="0" value={form.marketPrice} onChange={(e) => setForm({ ...form, marketPrice: e.target.value })} placeholder="0.00" />
               </div>
-              {!editingId && (
-                <div>
-                  <Label>Starting stock</Label>
-                  <Input type="number" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" />
-                </div>
-              )}
+              <div>
+                <Label>{editingId ? "Stock" : "Starting stock"}</Label>
+                <Input type="number" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" />
+              </div>
             </div>
             <div style={{ marginBottom: 14, maxWidth: 260 }}>
               <Label>Barcode{editingId ? "" : " (leave blank to auto-generate)"}</Label>
@@ -955,7 +953,7 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
             </div>
             {editingId && (
               <div style={{ fontSize: 11, color: T.textFaint, marginBottom: 14 }}>
-                {"Stock isn't edited here \u2014 log a stock in/out/discard entry in the Movement log to change it, so the history stays accurate."}
+                {"Changing Stock here overwrites the count directly and doesn't create a Movement log entry. For a running record of who moved stock and when, log it as a stock in/out/discard entry instead \u2014 use this field only to correct a wrong number."}
               </div>
             )}
             <Button type="submit" variant="in">

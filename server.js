@@ -329,15 +329,17 @@ app.patch("/api/products/:id/status", requireAuth, requireAdmin, (req, res) => {
 app.patch("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
   if (!product) return res.status(404).json({ error: "Product not found" });
-  const { name, category, unit, barcode, purchasePrice, retailPrice, marketPrice } = req.body || {};
+  const { name, category, unit, barcode, purchasePrice, retailPrice, marketPrice, stock } = req.body || {};
   if (!name || !category || purchasePrice === undefined || retailPrice === undefined) {
     return res.status(400).json({ error: "Name, category, purchase price, and retail price are required" });
   }
   const code = (barcode && barcode.trim()) || product.barcode;
   const hasMarket = marketPrice !== undefined && marketPrice !== null && String(marketPrice).trim() !== "";
+  const hasStock = stock !== undefined && stock !== null && String(stock).trim() !== "";
+  const nextStock = hasStock ? Math.max(0, Number(stock)) : product.stock;
   try {
-    db.prepare("UPDATE products SET name = ?, category = ?, unit = ?, barcode = ?, purchase_price = ?, retail_price = ?, market_price = ? WHERE id = ?")
-      .run(name, category, (unit && unit.trim()) || "pcs", code, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, product.id);
+    db.prepare("UPDATE products SET name = ?, category = ?, unit = ?, barcode = ?, purchase_price = ?, retail_price = ?, market_price = ?, stock = ? WHERE id = ?")
+      .run(name, category, (unit && unit.trim()) || "pcs", code, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, nextStock, product.id);
   } catch (e) {
     return res.status(400).json({ error: "That barcode is already in use" });
   }
