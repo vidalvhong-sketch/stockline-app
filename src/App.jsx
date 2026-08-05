@@ -578,10 +578,6 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }
     return statsYear;
   }, [statsMode, statsDay, statsMonth, statsYear]);
 
-  const totalCostFromSuppliers = useMemo(
-    () => periodTransactions.filter((t) => t.type === "IN").reduce((s, t) => s + t.price * t.qty, 0),
-    [periodTransactions]
-  );
   const totalRetailSales = useMemo(
     () => periodTransactions.filter((t) => t.type === "OUT").reduce((s, t) => s + t.price * t.qty, 0),
     [periodTransactions]
@@ -600,7 +596,6 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }
 
   const stats = [
     { label: "Stock cost (supplier rate)", value: fmtMoney(totalStockCostValue), alwaysCurrent: true },
-    { label: "Cost from suppliers", value: fmtMoney(totalCostFromSuppliers) },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
     { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
     { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
