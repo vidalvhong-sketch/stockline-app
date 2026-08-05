@@ -495,7 +495,7 @@ export default function App() {
       {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onEdit={editProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
-      {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} isAdmin={isAdmin} isMobile={isMobile} />}
+      {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} onLog={logMovement} staffName={agentName} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "agents" && isAdmin && <AgentsView currentAgentName={agentName} showToast={showToast} isMobile={isMobile} />}
     </>
   );
@@ -1312,11 +1312,19 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
 /* ---------------------------------------------------------------
    BARCODE CONTROL VIEW
 --------------------------------------------------------------- */
-function BarcodeView({ products, onSetStatus, isAdmin, isMobile }) {
+function BarcodeView({ products, onSetStatus, onLog, staffName, isAdmin, isMobile }) {
   const [code, setCode] = useState("");
   const [match, setMatch] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const inputRef = useRef(null);
+
+  const [scanMode, setScanMode] = useState("REMOVE"); // ADD | REMOVE | DISCARD
+  const [cart, setCart] = useState([]);
+  const [scanCode, setScanCode] = useState("");
+  const [scanError, setScanError] = useState("");
+  const [lastBatch, setLastBatch] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const scanInputRef = useRef(null);
 
   useEffect(() => { inputRef.current && inputRef.current.focus(); }, []);
 
@@ -1334,6 +1342,75 @@ function BarcodeView({ products, onSetStatus, isAdmin, isMobile }) {
     }
   }, [products]);
 
+  function handleScanSubmit(e) {
+    e.preventDefault();
+    const trimmed = scanCode.trim();
+    if (!trimmed) return;
+    const product = products.find((p) => p.barcode === trimmed);
+    if (!product) {
+      setScanError(`No product with barcode ${trimmed}`);
+      setScanCode("");
+      scanInputRef.current && scanInputRef.current.focus();
+      return;
+    }
+    setScanError("");
+    setCart((prev) => {
+      const idx = prev.findIndex((r) => r.productId === product.id && r.action === scanMode);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
+        return next;
+      }
+      return [...prev, { productId: product.id, name: product.name, unit: product.unit || "pcs", barcode: product.barcode, qty: 1, action: scanMode }];
+    });
+    setScanCode("");
+    scanInputRef.current && scanInputRef.current.focus();
+  }
+
+  function updateCartQty(index, qty) {
+    setCart((prev) => prev.map((r, i) => (i === index ? { ...r, qty: Math.max(1, Math.floor(qty) || 1) } : r)));
+  }
+  function updateCartAction(index, action) {
+    setCart((prev) => prev.map((r, i) => (i === index ? { ...r, action } : r)));
+  }
+  function removeCartRow(index) {
+    setCart((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function estValue(row) {
+    const p = products.find((pp) => pp.id === row.productId);
+    if (!p) return 0;
+    const unitPrice = row.action === "REMOVE" ? p.retail_price : p.purchase_price;
+    return unitPrice * row.qty;
+  }
+
+  async function saveBatch() {
+    setSaving(true);
+    const remaining = [];
+    let addedQty = 0, addedValue = 0, removedQty = 0, removedValue = 0, discardedQty = 0, discardedValue = 0;
+    for (const row of cart) {
+      const type = row.action === "ADD" ? "IN" : row.action === "REMOVE" ? "OUT" : "DISCARD";
+      const ok = await onLog({ productId: row.productId, type, qty: row.qty, staff: staffName });
+      if (ok !== false) {
+        const p = products.find((pp) => pp.id === row.productId);
+        const unitPrice = type === "IN" ? p?.purchase_price : type === "OUT" ? p?.retail_price : p?.purchase_price;
+        const value = (unitPrice || 0) * row.qty;
+        if (type === "IN") { addedQty += row.qty; addedValue += value; }
+        if (type === "OUT") { removedQty += row.qty; removedValue += value; }
+        if (type === "DISCARD") { discardedQty += row.qty; discardedValue += value; }
+      } else {
+        remaining.push(row);
+      }
+    }
+    setCart(remaining);
+    setLastBatch({
+      addedQty, addedValue, removedQty, removedValue, discardedQty, discardedValue,
+      failedCount: remaining.length, timestamp: new Date().toISOString(),
+    });
+    setSaving(false);
+    scanInputRef.current && scanInputRef.current.focus();
+  }
+
   const held = products.filter((p) => p.status === "hold");
   const stopped = products.filter((p) => p.status === "stopped");
 
@@ -1343,13 +1420,129 @@ function BarcodeView({ products, onSetStatus, isAdmin, isMobile }) {
     stopped: [{ status: "active", label: "Reactivate", icon: RotateCcw, variant: "in" }, { status: "hold", label: "Put on hold", icon: AlertTriangle, variant: "amber" }],
   };
 
+  const scanModes = [
+    { key: "ADD", label: "Add (stock in)", icon: ArrowDownToLine, variant: "in" },
+    { key: "REMOVE", label: "Remove (sale)", icon: ArrowUpFromLine, variant: "out" },
+    { key: "DISCARD", label: "Discard / waste", icon: Trash2, variant: "waste" },
+  ];
+
   return (
     <div>
       <SectionHeader eyebrow="Access control" title="Barcode control" />
+
       <Card style={{ marginBottom: 20 }}>
+        <div style={{ ...fontDisplay, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 4 }}>Bulk stock scan</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14 }}>
+          {"Set the mode, then scan items one after another \u2014 each scan adds to the batch below. Scanning the same item again just bumps its quantity. Nothing is saved until you click Save batch."}
+        </div>
+
+        <Label>Scanning as</Label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, marginTop: 6, flexWrap: "wrap" }}>
+          {scanModes.map((m) => {
+            const Icon = m.icon;
+            return (
+              <Button key={m.key} variant={scanMode === m.key ? m.variant : "ghost"} onClick={() => setScanMode(m.key)}>
+                <Icon size={14} />{m.label}
+              </Button>
+            );
+          })}
+        </div>
+
         <Label>Scan or enter barcode</Label>
+        <form onSubmit={handleScanSubmit} style={{ display: "flex", gap: 10, marginTop: 6 }}>
+          <Input
+            ref={scanInputRef}
+            value={scanCode}
+            onChange={(e) => { setScanCode(e.target.value); setScanError(""); }}
+            placeholder="e.g. 041982773610"
+            style={{ ...fontMono, maxWidth: 320 }}
+            autoFocus
+          />
+          <Button type="submit" variant="amber"><Plus size={14} />Add to batch</Button>
+        </form>
+        {scanError && <div style={{ color: T.out, fontSize: 12, marginTop: 8 }}>{scanError}</div>}
+
+        {cart.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                    {["Product", "Qty", "Action", "Est. value", ""].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "8px 10px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cart.map((row, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${T.border}` }}>
+                      <td style={{ padding: "8px 10px", fontSize: 13, color: T.text }}>{row.name}</td>
+                      <td style={{ padding: "8px 10px" }}>
+                        <Input type="number" min="1" value={row.qty} onChange={(e) => updateCartQty(i, Number(e.target.value))} style={{ width: 70, padding: "5px 8px", fontSize: 12 }} />
+                      </td>
+                      <td style={{ padding: "8px 10px" }}>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {scanModes.map((m) => (
+                            <button
+                              key={m.key}
+                              onClick={() => updateCartAction(i, m.key)}
+                              style={{
+                                ...fontMono, fontSize: 10, padding: "4px 7px", borderRadius: 3, cursor: "pointer",
+                                background: row.action === m.key ? T.surfaceRaised : "transparent",
+                                color: row.action === m.key ? T.text : T.textFaint,
+                                border: `1px solid ${row.action === m.key ? T.borderStrong : T.border}`,
+                              }}
+                            >
+                              {m.key}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                      <td style={{ padding: "8px 10px", ...fontMono, fontSize: 12, color: T.textMuted }}>{fmtMoney(estValue(row))}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                        <button onClick={() => removeCartRow(i)} style={{ background: "transparent", border: "none", color: T.textFaint, cursor: "pointer", padding: 4 }}>
+                          <X size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+              <Button variant="in" onClick={saveBatch} disabled={saving}>
+                <CheckCircle2 size={14} />{saving ? "Saving\u2026" : `Save batch (${cart.length})`}
+              </Button>
+              <Button variant="ghost" onClick={() => setCart([])} disabled={saving}>
+                <X size={14} />Clear batch
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {lastBatch && (
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
+            <Label>{`Last batch saved \u2014 ${fmtDateTime(lastBatch.timestamp)}`}</Label>
+            <div style={{ display: "flex", gap: 20, marginTop: 8, flexWrap: "wrap", ...fontMono, fontSize: 13 }}>
+              <span style={{ color: T.in }}>+{lastBatch.addedQty} added ({fmtMoney(lastBatch.addedValue)})</span>
+              <span style={{ color: T.out }}>-{lastBatch.removedQty} removed / sold ({fmtMoney(lastBatch.removedValue)})</span>
+              <span style={{ color: T.waste }}>{lastBatch.discardedQty} discarded ({fmtMoney(lastBatch.discardedValue)})</span>
+            </div>
+            {lastBatch.failedCount > 0 && (
+              <div style={{ color: T.out, fontSize: 12, marginTop: 8 }}>
+                {`${lastBatch.failedCount} ${lastBatch.failedCount === 1 ? "item" : "items"} couldn't be saved (likely not enough stock) and stayed in the batch above \u2014 fix and try again.`}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
+      <BarcodeDivider />
+
+      <Card style={{ marginBottom: 20 }}>
+        <Label>Look up a single item</Label>
         <form onSubmit={lookup} style={{ display: "flex", gap: 10, marginTop: 6 }}>
-          <Input ref={inputRef} value={code} onChange={(e) => { setCode(e.target.value); setNotFound(false); }} placeholder="e.g. 041982773610" style={{ ...fontMono, maxWidth: 320 }} autoFocus />
+          <Input ref={inputRef} value={code} onChange={(e) => { setCode(e.target.value); setNotFound(false); }} placeholder="e.g. 041982773610" style={{ ...fontMono, maxWidth: 320 }} />
           <Button type="submit" variant="amber"><Search size={14} />Look up</Button>
         </form>
         <div style={{ fontSize: 12, color: T.textFaint, marginTop: 8 }}>
