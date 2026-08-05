@@ -364,6 +364,23 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
+// Temporary diagnostic: log what's actually in the transactions table so we
+// can verify production data without guessing. Safe to run every boot.
+try {
+  const txnRows = db.prepare("SELECT id, product_id, type, qty, price, staff, timestamp FROM transactions ORDER BY timestamp").all();
+  console.log(`[DIAG] transaction count: ${txnRows.length}`);
+  for (const r of txnRows) {
+    console.log(`[DIAG] ${r.timestamp}  ${r.type.padEnd(8)} qty=${r.qty} price=${r.price} staff=${r.staff} product=${r.product_id}`);
+  }
+  const productRows = db.prepare("SELECT id, name, purchase_price, retail_price, market_price, stock, status FROM products").all();
+  console.log(`[DIAG] product count: ${productRows.length}`);
+  for (const p of productRows) {
+    console.log(`[DIAG] product ${p.id} name=${p.name} stock=${p.stock} status=${p.status}`);
+  }
+} catch (e) {
+  console.log("[DIAG] error reading diagnostic data:", e.message);
+}
+
 app.listen(PORT, () => {
   console.log(`STOCKLINE server running on port ${PORT}`);
 });
