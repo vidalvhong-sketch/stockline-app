@@ -211,6 +211,63 @@ function BarcodeDivider() {
   );
 }
 
+/* Admin-only control to permanently purge movement history before a chosen
+   date. Shared between the Dashboard and Movement log views. */
+function DangerZoneCard({ onPurgeBefore }) {
+  const [purgeDate, setPurgeDate] = useState("");
+  const [purgeConfirmText, setPurgeConfirmText] = useState("");
+  const [purging, setPurging] = useState(false);
+
+  return (
+    <Card style={{ borderColor: T.outDim }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <AlertTriangle size={15} color={T.out} />
+        <div style={{ ...fontDisplay, fontSize: 14, fontWeight: 700, color: T.out }}>Danger zone</div>
+      </div>
+      <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
+        Permanently deletes movement history before a chosen date \u2014 useful for clearing out old test data
+        or resetting the dashboard graph and totals to start fresh from a specific point. This does not change
+        current stock levels, only the historical log and the dashboard's totals/chart.
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: purgeDate ? 14 : 0 }}>
+        <div>
+          <Label>Delete all movement before</Label>
+          <Input type="date" value={purgeDate} onChange={(e) => { setPurgeDate(e.target.value); setPurgeConfirmText(""); }} style={{ width: 160 }} />
+        </div>
+      </div>
+      {purgeDate && (
+        <div style={{ background: T.surfaceInput, border: `1px solid ${T.outDim}`, borderRadius: 4, padding: 14 }}>
+          <div style={{ fontSize: 12, color: T.text, marginBottom: 10 }}>
+            This will permanently delete every movement entry logged before <b>{purgeDate}</b>. This can't be undone.
+            Type <b style={{ ...fontMono }}>DELETE</b> to confirm.
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <Input
+              value={purgeConfirmText}
+              onChange={(e) => setPurgeConfirmText(e.target.value)}
+              placeholder="Type DELETE"
+              style={{ maxWidth: 160, ...fontMono }}
+            />
+            <Button
+              variant="out"
+              disabled={purgeConfirmText !== "DELETE" || purging}
+              onClick={async () => {
+                setPurging(true);
+                const ok = await onPurgeBefore(purgeDate);
+                setPurging(false);
+                if (ok) { setPurgeDate(""); setPurgeConfirmText(""); }
+              }}
+            >
+              <Trash2 size={13} />{purging ? "Deleting\u2026" : "Permanently delete"}
+            </Button>
+            <Button variant="ghost" onClick={() => { setPurgeDate(""); setPurgeConfirmText(""); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /* ---------------------------------------------------------------
    LOGIN
 --------------------------------------------------------------- */
@@ -452,7 +509,7 @@ export default function App() {
           </div>
         )}
 
-        {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} />}
+        {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} />}
         {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} />}
         {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} />}
         {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} />}
@@ -466,7 +523,7 @@ export default function App() {
 /* ---------------------------------------------------------------
    DASHBOARD
 --------------------------------------------------------------- */
-function Dashboard({ products, transactions, suppliers }) {
+function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }) {
   const [granularity, setGranularity] = useState("daily");
   const counts = { daily: 14, weekly: 10, yearly: 5 };
 
@@ -670,6 +727,13 @@ function Dashboard({ products, transactions, suppliers }) {
           </div>
         </Card>
       </div>
+
+      {isAdmin && (
+        <>
+          <BarcodeDivider />
+          <DangerZoneCard onPurgeBefore={onPurgeBefore} />
+        </>
+      )}
     </div>
   );
 }
@@ -900,9 +964,6 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
   const [filterType, setFilterType] = useState("ALL");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [purgeDate, setPurgeDate] = useState("");
-  const [purgeConfirmText, setPurgeConfirmText] = useState("");
-  const [purging, setPurging] = useState(false);
 
   const selectedProduct = products.find((p) => p.id === productId);
 
@@ -1063,52 +1124,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
       {isAdmin && (
         <>
           <BarcodeDivider />
-          <Card style={{ borderColor: T.outDim }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <AlertTriangle size={15} color={T.out} />
-              <div style={{ ...fontDisplay, fontSize: 14, fontWeight: 700, color: T.out }}>Danger zone</div>
-            </div>
-            <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
-              Permanently deletes movement history before a chosen date \u2014 useful for clearing out old test data
-              or resetting the dashboard graph to start fresh from a specific point. This does not change current
-              stock levels, only the historical log and the dashboard's totals/chart.
-            </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: purgeDate ? 14 : 0 }}>
-              <div>
-                <Label>Delete all movement before</Label>
-                <Input type="date" value={purgeDate} onChange={(e) => { setPurgeDate(e.target.value); setPurgeConfirmText(""); }} style={{ width: 160 }} />
-              </div>
-            </div>
-            {purgeDate && (
-              <div style={{ background: T.surfaceInput, border: `1px solid ${T.outDim}`, borderRadius: 4, padding: 14 }}>
-                <div style={{ fontSize: 12, color: T.text, marginBottom: 10 }}>
-                  This will permanently delete every movement entry logged before <b>{purgeDate}</b>. This can't be undone.
-                  Type <b style={{ ...fontMono }}>DELETE</b> to confirm.
-                </div>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <Input
-                    value={purgeConfirmText}
-                    onChange={(e) => setPurgeConfirmText(e.target.value)}
-                    placeholder="Type DELETE"
-                    style={{ maxWidth: 160, ...fontMono }}
-                  />
-                  <Button
-                    variant="out"
-                    disabled={purgeConfirmText !== "DELETE" || purging}
-                    onClick={async () => {
-                      setPurging(true);
-                      const ok = await onPurgeBefore(purgeDate);
-                      setPurging(false);
-                      if (ok) { setPurgeDate(""); setPurgeConfirmText(""); }
-                    }}
-                  >
-                    <Trash2 size={13} />{purging ? "Deleting\u2026" : "Permanently delete"}
-                  </Button>
-                  <Button variant="ghost" onClick={() => { setPurgeDate(""); setPurgeConfirmText(""); }}>Cancel</Button>
-                </div>
-              </div>
-            )}
-          </Card>
+          <DangerZoneCard onPurgeBefore={onPurgeBefore} />
         </>
       )}
     </div>
