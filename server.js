@@ -133,6 +133,20 @@ if (hadLegacyPrice && !hadPricingColumns) {
   console.log("Migrated products table: split price into purchase_price / retail_price / market_price.");
 }
 
+// One-time cleanup: the person running this app confirmed everything logged
+// before Aug 3, 2026 was test data, not real activity. Guarded by a marker
+// in `meta` so it only ever runs once, the same way schema migrations are
+// guarded above \u2014 safe to redeploy repeatedly without re-triggering it, and
+// doesn't block legitimately backdated entries logged after this point.
+db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+const PURGE_MARKER = "purge_test_data_before_2026-08-03";
+const alreadyPurged = db.prepare("SELECT value FROM meta WHERE key = ?").get(PURGE_MARKER);
+if (!alreadyPurged) {
+  const result = db.prepare("DELETE FROM transactions WHERE timestamp < ?").run("2026-08-03T00:00:00.000Z");
+  db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(PURGE_MARKER, new Date().toISOString());
+  console.log(`One-time cleanup: removed ${result.changes} test movement entries logged before Aug 3, 2026.`);
+}
+
 function genId(prefix) {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
