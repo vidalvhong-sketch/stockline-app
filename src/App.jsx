@@ -25,6 +25,8 @@ const T = {
   inDim: "#1E5C46",
   out: "#E8604C",
   outDim: "#6E2B21",
+  waste: "#A87C5A",
+  wasteDim: "#4A3826",
   text: "#EDEFF2",
   textMuted: "#8B96A5",
   textFaint: "#5A6473",
@@ -35,6 +37,21 @@ const fontMono = { fontFamily: "'IBM Plex Mono', monospace" };
 const fontBody = { fontFamily: "'Inter', sans-serif" };
 
 const COMMON_UNITS = ["pcs", "kg", "g", "sack", "pack", "box", "ream", "liter", "roll", "dozen", "set", "bottle"];
+
+function statusTone(status) {
+  if (status === "active") return "in";
+  if (status === "hold") return "amber";
+  return "out"; // stopped
+}
+function statusLabel(status) {
+  if (status === "hold") return "on hold";
+  return status;
+}
+function movementTone(type) {
+  if (type === "IN") return "in";
+  if (type === "OUT") return "out";
+  return "waste"; // DISCARD
+}
 
 /* ---------------------------------------------------------------
    HELPERS
@@ -143,6 +160,7 @@ function Button({ children, onClick, variant = "default", type = "button", style
     in: { background: T.in, border: `1px solid ${T.in}`, color: "#0A2A1F" },
     out: { background: T.out, border: `1px solid ${T.out}`, color: "#2E120C" },
     ghost: { background: "transparent", border: `1px solid ${T.border}`, color: T.textMuted },
+    waste: { background: T.waste, border: `1px solid ${T.waste}`, color: "#2A2016" },
   };
   return (
     <button type={type} onClick={onClick} disabled={disabled} style={{
@@ -160,6 +178,7 @@ function Badge({ children, tone = "default" }) {
     in: { bg: T.inDim, fg: "#B7F0DD", bd: T.in },
     out: { bg: T.outDim, fg: "#F6C4BA", bd: T.out },
     amber: { bg: T.amberDim, fg: "#FBE29B", bd: T.amber },
+    waste: { bg: T.wasteDim, fg: "#E4D0BA", bd: T.waste },
   };
   const c = tones[tone];
   return (
@@ -311,11 +330,12 @@ export default function App() {
     }
   }
 
-  async function toggleProductStatus(productId) {
+  async function setProductStatus(productId, status) {
     try {
-      const updated = await api.toggleProduct(productId);
+      const updated = await api.setProductStatus(productId, status);
       setProducts((prev) => prev.map((p) => (p.id === productId ? updated : p)));
-      showToast(updated.status === "stopped" ? `${updated.name} stopped` : `${updated.name} reactivated`, updated.status === "stopped" ? "out" : "in");
+      const toneMap = { active: "in", hold: "amber", stopped: "out" };
+      showToast(`${updated.name} set to ${statusLabel(status)}`, toneMap[status] === "amber" ? "default" : toneMap[status]);
     } catch (err) {
       showToast(err.message, "out");
     }
@@ -418,10 +438,10 @@ export default function App() {
         )}
 
         {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} />}
-        {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onToggle={toggleProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} />}
+        {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} />}
         {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} />}
         {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} />}
-        {view === "barcode" && <BarcodeView products={products} onToggle={toggleProductStatus} isAdmin={isAdmin} />}
+        {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} isAdmin={isAdmin} />}
         {view === "agents" && isAdmin && <AgentsView currentAgentName={agentName} showToast={showToast} />}
       </div>
     </div>
@@ -440,31 +460,54 @@ function Dashboard({ products, transactions, suppliers }) {
     return keys.map((k) => {
       const inQty = transactions.filter((t) => t.type === "IN" && periodKey(t.timestamp, granularity) === k).reduce((s, t) => s + t.qty, 0);
       const outQty = transactions.filter((t) => t.type === "OUT" && periodKey(t.timestamp, granularity) === k).reduce((s, t) => s + t.qty, 0);
-      return { key: k, label: periodLabel(k, granularity), "Stock in": inQty, "Stock out": outQty };
+      const discardQty = transactions.filter((t) => t.type === "DISCARD" && periodKey(t.timestamp, granularity) === k).reduce((s, t) => s + t.qty, 0);
+      return { key: k, label: periodLabel(k, granularity), "Stock in": inQty, "Stock out": outQty, "Discarded": discardQty };
     });
   }, [transactions, granularity]);
 
   const activeProducts = products.filter((p) => p.status === "active");
-  const stoppedProducts = products.filter((p) => p.status === "stopped");
   const totalStockUnits = products.reduce((s, p) => s + p.stock, 0);
   const lowStock = activeProducts.filter((p) => p.stock > 0 && p.stock <= 10);
   const outOfStock = activeProducts.filter((p) => p.stock === 0);
 
+  const findProduct = (t) => products.find((pp) => pp.id === (t.product_id || t.productId));
+
+  const totalCostFromSuppliers = useMemo(
+    () => transactions.filter((t) => t.type === "IN").reduce((s, t) => s + t.price * t.qty, 0),
+    [transactions]
+  );
+  const totalRetailSales = useMemo(
+    () => transactions.filter((t) => t.type === "OUT").reduce((s, t) => s + t.price * t.qty, 0),
+    [transactions]
+  );
+  const totalMarketSales = useMemo(
+    () => transactions.filter((t) => t.type === "OUT").reduce((s, t) => {
+      const p = findProduct(t);
+      return s + (p && p.market_price != null ? p.market_price * t.qty : 0);
+    }, 0),
+    [transactions, products]
+  );
+  const totalDiscarded = useMemo(
+    () => transactions.filter((t) => t.type === "DISCARD").reduce((s, t) => s + t.price * t.qty, 0),
+    [transactions]
+  );
+
   const stats = [
-    { label: "Active products", value: activeProducts.length },
-    { label: "Stopped products", value: stoppedProducts.length },
-    { label: "Total stock units", value: totalStockUnits.toLocaleString() },
-    { label: "Suppliers", value: suppliers.length },
+    { label: "Total stock units", value: totalStockUnits.toLocaleString(), plain: true },
+    { label: "Cost from suppliers", value: fmtMoney(totalCostFromSuppliers) },
+    { label: "Retail sales", value: fmtMoney(totalRetailSales) },
+    { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
+    { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
   ];
 
   return (
     <div>
       <SectionHeader eyebrow="Overview" title="Inventory dashboard" />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 24 }}>
         {stats.map((s) => (
           <Card key={s.label} style={{ padding: 16 }}>
             <Label>{s.label}</Label>
-            <div style={{ ...fontDisplay, fontSize: 26, fontWeight: 700, color: T.text }}>{s.value}</div>
+            <div style={{ ...fontDisplay, fontSize: s.plain ? 26 : 22, fontWeight: 700, color: s.warn ? T.waste : T.text }}>{s.value}</div>
           </Card>
         ))}
       </div>
@@ -496,6 +539,7 @@ function Dashboard({ products, transactions, suppliers }) {
               <Legend wrapperStyle={{ fontSize: 12, color: T.textMuted }} />
               <Bar dataKey="Stock in" fill={T.in} radius={[2, 2, 0, 0]} />
               <Bar dataKey="Stock out" fill={T.out} radius={[2, 2, 0, 0]} />
+              <Bar dataKey="Discarded" fill={T.waste} radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -529,11 +573,14 @@ function Dashboard({ products, transactions, suppliers }) {
           <Label>Recent movement</Label>
           <div style={{ marginTop: 8 }}>
             {transactions.slice(0, 5).map((t) => {
-              const p = products.find((pp) => pp.id === t.product_id || pp.id === t.productId);
+              const p = findProduct(t);
               return (
                 <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${T.border}`, gap: 8 }}>
-                  <span style={{ fontSize: 13, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p ? p.name : "Unknown product"}</span>
-                  <Badge tone={t.type === "IN" ? "in" : "out"}>{t.type} {t.qty}</Badge>
+                  <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+                    <span style={{ fontSize: 13, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p ? p.name : "Unknown product"}</span>
+                    <span style={{ fontSize: 11, color: T.textFaint }}>{t.staff}</span>
+                  </div>
+                  <Badge tone={movementTone(t.type)}>{t.type} {t.qty}</Badge>
                 </div>
               );
             })}
@@ -548,7 +595,7 @@ function Dashboard({ products, transactions, suppliers }) {
 /* ---------------------------------------------------------------
    PRODUCTS VIEW
 --------------------------------------------------------------- */
-function ProductsView({ products, categories, onAdd, onToggle, onDelete, isAdmin }) {
+function ProductsView({ products, categories, onAdd, onSetStatus, onDelete, isAdmin }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" });
   const [query, setQuery] = useState("");
@@ -653,26 +700,34 @@ function ProductsView({ products, categories, onAdd, onToggle, onDelete, isAdmin
                   </td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textFaint }}>{p.market_price != null ? fmtMoney(p.market_price) : "\u2014"}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: p.stock === 0 ? T.out : p.stock <= 10 ? T.amber : T.text }}>{p.stock} {p.unit || "pcs"}</td>
-                  <td style={{ padding: "10px 16px" }}><Badge tone={p.status === "active" ? "in" : "out"}>{p.status}</Badge></td>
+                  <td style={{ padding: "10px 16px" }}>
+                    {isAdmin ? (
+                      <Select
+                        value={p.status}
+                        onChange={(e) => onSetStatus(p.id, e.target.value)}
+                        style={{ padding: "4px 6px", fontSize: 11, width: 108, ...fontMono }}
+                      >
+                        <option value="active">active</option>
+                        <option value="hold">on hold</option>
+                        <option value="stopped">stopped</option>
+                      </Select>
+                    ) : (
+                      <Badge tone={statusTone(p.status)}>{statusLabel(p.status)}</Badge>
+                    )}
+                  </td>
                   <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                     {isAdmin && (
-                      <>
-                        <Button variant="ghost" style={{ padding: "5px 10px", fontSize: 11, marginRight: 6 }} onClick={() => onToggle(p.id)}>
-                          {p.status === "active" ? <Ban size={12} /> : <RotateCcw size={12} />}
-                          {p.status === "active" ? "Stop" : "Reactivate"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          style={{ padding: "5px 10px", fontSize: 11, color: T.out }}
-                          onClick={() => {
-                            if (window.confirm(`Delete "${p.name}"? This can't be undone. Past movement history will show it as a deleted product instead of being removed.`)) {
-                              onDelete(p.id, p.name);
-                            }
-                          }}
-                        >
-                          <Trash2 size={12} />Delete
-                        </Button>
-                      </>
+                      <Button
+                        variant="ghost"
+                        style={{ padding: "5px 10px", fontSize: 11, color: T.out }}
+                        onClick={() => {
+                          if (window.confirm(`Delete "${p.name}"? This can't be undone. Past movement history will show it as a deleted product instead of being removed.`)) {
+                            onDelete(p.id, p.name);
+                          }
+                        }}
+                      >
+                        <Trash2 size={12} />Delete
+                      </Button>
                     )}
                   </td>
                 </tr>
@@ -765,7 +820,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
   const selectedProduct = products.find((p) => p.id === productId);
 
   useEffect(() => {
-    if (selectedProduct) setPrice(type === "IN" ? selectedProduct.purchase_price : selectedProduct.retail_price);
+    if (selectedProduct) setPrice(type === "OUT" ? selectedProduct.retail_price : selectedProduct.purchase_price);
   }, [productId, type]);
 
   async function submit(e) {
@@ -780,14 +835,21 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
 
   const filteredTxns = transactions.filter((t) => filterType === "ALL" || t.type === filterType);
 
+  const typeLabels = {
+    IN: { verb: "Received by", action: "Log stock in", button: "in" },
+    OUT: { verb: "Released by", action: "Log stock out", button: "out" },
+    DISCARD: { verb: "Reported by", action: "Log discarded / waste", button: "waste" },
+  };
+
   return (
     <div>
-      <SectionHeader eyebrow="Movement" title="Product in / product out log" />
+      <SectionHeader eyebrow="Movement" title="Product in / out / discard log" />
 
       <Card style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <Button variant={type === "IN" ? "in" : "ghost"} onClick={() => setType("IN")}><ArrowDownToLine size={14} />Product in</Button>
           <Button variant={type === "OUT" ? "out" : "ghost"} onClick={() => setType("OUT")}><ArrowUpFromLine size={14} />Product out</Button>
+          <Button variant={type === "DISCARD" ? "waste" : "ghost"} onClick={() => setType("DISCARD")}><Trash2 size={14} />Discard / waste</Button>
         </div>
         <form onSubmit={submit}>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
@@ -803,13 +865,13 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
               <Input required type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" />
             </div>
             <div>
-              <Label>{type === "IN" ? "Purchase price (from supplier)" : "Retail price (selling)"}</Label>
+              <Label>{type === "OUT" ? "Retail price (selling)" : type === "DISCARD" ? "Cost value (writing off)" : "Purchase price (from supplier)"}</Label>
               <Input type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: type === "IN" ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12, marginBottom: 14 }}>
             <div>
-              <Label>{type === "IN" ? "Received by" : "Released by"}</Label>
+              <Label>{typeLabels[type].verb}</Label>
               <Input required value={staff} onChange={(e) => setStaff(e.target.value)} placeholder="Staff name" />
             </div>
             {type === "IN" && (
@@ -826,9 +888,9 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
               <Input type="datetime-local" value={timestamp} onChange={(e) => setTimestamp(e.target.value)} />
             </div>
           </div>
-          <Button type="submit" variant={type === "IN" ? "in" : "out"}>
-            {type === "IN" ? <ArrowDownToLine size={14} /> : <ArrowUpFromLine size={14} />}
-            Log {type === "IN" ? "stock in" : "stock out"}
+          <Button type="submit" variant={typeLabels[type].button}>
+            {type === "IN" ? <ArrowDownToLine size={14} /> : type === "OUT" ? <ArrowUpFromLine size={14} /> : <Trash2 size={14} />}
+            {typeLabels[type].action}
           </Button>
         </form>
       </Card>
@@ -836,7 +898,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <Label>History</Label>
         <div style={{ display: "flex", gap: 6 }}>
-          {["ALL", "IN", "OUT"].map((f) => (
+          {["ALL", "IN", "OUT", "DISCARD"].map((f) => (
             <button key={f} onClick={() => setFilterType(f)} style={{
               ...fontMono, fontSize: 11, padding: "5px 10px", borderRadius: 3, cursor: "pointer",
               background: filterType === f ? T.surfaceRaised : "transparent",
@@ -864,7 +926,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
               const s = suppliers.find((ss) => ss.id === (t.supplier_id || t.supplierId));
               return (
                 <tr key={t.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                  <td style={{ padding: "10px 16px" }}><Badge tone={t.type === "IN" ? "in" : "out"}>{t.type}</Badge></td>
+                  <td style={{ padding: "10px 16px" }}><Badge tone={movementTone(t.type)}>{t.type}</Badge></td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p ? p.name : "Deleted product"}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{t.qty} {p ? (p.unit || "pcs") : ""}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textMuted }}>{fmtMoney(t.price)}</td>
@@ -887,7 +949,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff }
 /* ---------------------------------------------------------------
    BARCODE CONTROL VIEW
 --------------------------------------------------------------- */
-function BarcodeView({ products, onToggle, isAdmin }) {
+function BarcodeView({ products, onSetStatus, isAdmin }) {
   const [code, setCode] = useState("");
   const [match, setMatch] = useState(null);
   const [notFound, setNotFound] = useState(false);
@@ -909,7 +971,14 @@ function BarcodeView({ products, onToggle, isAdmin }) {
     }
   }, [products]);
 
+  const held = products.filter((p) => p.status === "hold");
   const stopped = products.filter((p) => p.status === "stopped");
+
+  const statusActions = {
+    active: [{ status: "hold", label: "Put on hold", icon: AlertTriangle, variant: "amber" }, { status: "stopped", label: "Stop this product", icon: Ban, variant: "out" }],
+    hold: [{ status: "active", label: "Reactivate", icon: RotateCcw, variant: "in" }, { status: "stopped", label: "Stop this product", icon: Ban, variant: "out" }],
+    stopped: [{ status: "active", label: "Reactivate", icon: RotateCcw, variant: "in" }, { status: "hold", label: "Put on hold", icon: AlertTriangle, variant: "amber" }],
+  };
 
   return (
     <div>
@@ -940,18 +1009,24 @@ function BarcodeView({ products, onToggle, isAdmin }) {
             <div style={{ flex: 1, minWidth: 200 }}>
               <div style={{ ...fontDisplay, fontSize: 18, fontWeight: 700, color: T.text }}>{match.name}</div>
               <div style={{ fontSize: 13, color: T.textMuted, marginTop: 2 }}>{match.category}</div>
-              <div style={{ display: "flex", gap: 16, marginTop: 10, ...fontMono, fontSize: 13, color: T.text }}>
+              <div style={{ display: "flex", gap: 16, marginTop: 10, ...fontMono, fontSize: 13, color: T.text, flexWrap: "wrap" }}>
                 <span>{fmtMoney(match.retail_price)} <span style={{ color: T.textFaint, fontSize: 11 }}>retail</span></span>
                 <span style={{ color: T.textFaint }}>{fmtMoney(match.purchase_price)} <span style={{ fontSize: 11 }}>cost</span></span>
                 <span>{match.stock} {match.unit || "pcs"} in stock</span>
-                <Badge tone={match.status === "active" ? "in" : "out"}>{match.status}</Badge>
+                <Badge tone={statusTone(match.status)}>{statusLabel(match.status)}</Badge>
               </div>
             </div>
             {isAdmin && (
-              <Button variant={match.status === "active" ? "out" : "in"} onClick={() => onToggle(match.id)}>
-                {match.status === "active" ? <Ban size={14} /> : <RotateCcw size={14} />}
-                {match.status === "active" ? "Stop this product" : "Reactivate this product"}
-              </Button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {statusActions[match.status].map((a) => {
+                  const Icon = a.icon;
+                  return (
+                    <Button key={a.status} variant={a.variant} onClick={() => onSetStatus(match.id, a.status)}>
+                      <Icon size={14} />{a.label}
+                    </Button>
+                  );
+                })}
+              </div>
             )}
           </div>
         </Card>
@@ -959,20 +1034,46 @@ function BarcodeView({ products, onToggle, isAdmin }) {
 
       <BarcodeDivider />
 
-      <Label>Currently stopped ({stopped.length})</Label>
-      <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
-        {stopped.map((p) => (
-          <Card key={p.id} style={{ borderColor: T.out }}>
-            <div style={{ fontSize: 13, color: T.text, fontWeight: 500 }}>{p.name}</div>
-            <div style={{ ...fontMono, fontSize: 11, color: T.textFaint, marginTop: 4 }}>{p.barcode}</div>
-            {isAdmin && (
-              <Button variant="ghost" style={{ marginTop: 10, fontSize: 11, padding: "5px 10px" }} onClick={() => onToggle(p.id)}>
-                <RotateCcw size={12} />Reactivate
-              </Button>
-            )}
-          </Card>
-        ))}
-        {stopped.length === 0 && <div style={{ color: T.textFaint, fontSize: 13 }}>No products are currently stopped.</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <Label>On hold ({held.length})</Label>
+          <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
+            {held.map((p) => (
+              <Card key={p.id} style={{ borderColor: T.amber }}>
+                <div style={{ fontSize: 13, color: T.text, fontWeight: 500 }}>{p.name}</div>
+                <div style={{ ...fontMono, fontSize: 11, color: T.textFaint, marginTop: 4 }}>{p.barcode}</div>
+                {isAdmin && (
+                  <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                    <Button variant="ghost" style={{ fontSize: 11, padding: "5px 10px" }} onClick={() => onSetStatus(p.id, "active")}>
+                      <RotateCcw size={12} />Reactivate
+                    </Button>
+                    <Button variant="ghost" style={{ fontSize: 11, padding: "5px 10px", color: T.out }} onClick={() => onSetStatus(p.id, "stopped")}>
+                      <Ban size={12} />Stop
+                    </Button>
+                  </div>
+                )}
+              </Card>
+            ))}
+            {held.length === 0 && <div style={{ color: T.textFaint, fontSize: 13 }}>Nothing on hold.</div>}
+          </div>
+        </div>
+        <div>
+          <Label>Stopped ({stopped.length})</Label>
+          <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
+            {stopped.map((p) => (
+              <Card key={p.id} style={{ borderColor: T.out }}>
+                <div style={{ fontSize: 13, color: T.text, fontWeight: 500 }}>{p.name}</div>
+                <div style={{ ...fontMono, fontSize: 11, color: T.textFaint, marginTop: 4 }}>{p.barcode}</div>
+                {isAdmin && (
+                  <Button variant="ghost" style={{ marginTop: 10, fontSize: 11, padding: "5px 10px" }} onClick={() => onSetStatus(p.id, "active")}>
+                    <RotateCcw size={12} />Reactivate
+                  </Button>
+                )}
+              </Card>
+            ))}
+            {stopped.length === 0 && <div style={{ color: T.textFaint, fontSize: 13 }}>No products are currently stopped.</div>}
+          </div>
+        </div>
       </div>
     </div>
   );

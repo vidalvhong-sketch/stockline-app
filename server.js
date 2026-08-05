@@ -161,17 +161,18 @@ if (productCount === 0) {
   const prodStmt = db.prepare("INSERT INTO products (id, barcode, name, category, purchase_price, retail_price, market_price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?,?,?)");
   const p1 = genId("prd"), p2 = genId("prd"), p3 = genId("prd"), p4 = genId("prd");
   prodStmt.run(p1, genBarcode(), "A4 Bond Paper", "Office Supplies", 180, 220, 240, 140, "active", "ream");
-  prodStmt.run(p2, genBarcode(), "USB Headset", "Electronics", 650, 850, 950, 32, "active", "pcs");
+  prodStmt.run(p2, genBarcode(), "USB Headset", "Electronics", 650, 850, 950, 32, "hold", "pcs");
   prodStmt.run(p3, genBarcode(), "Ballpoint Pen", "Office Supplies", 70, 95, 110, 4, "active", "box");
   prodStmt.run(p4, genBarcode(), "Rice", "Groceries", 1500, 1800, 1900, 0, "stopped", "sack");
 
   const txnStmt = db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)");
   const now = Date.now();
-  txnStmt.run(genId("txn"), p1, "IN", 100, "Vhong", sup1, 220, new Date(now - 6 * 86400000).toISOString());
+  txnStmt.run(genId("txn"), p1, "IN", 100, "Vhong", sup1, 180, new Date(now - 6 * 86400000).toISOString());
   txnStmt.run(genId("txn"), p1, "OUT", 20, "Mika", null, 220, new Date(now - 4 * 86400000).toISOString());
-  txnStmt.run(genId("txn"), p2, "IN", 40, "Vhong", sup2, 850, new Date(now - 3 * 86400000).toISOString());
+  txnStmt.run(genId("txn"), p2, "IN", 40, "Vhong", sup2, 650, new Date(now - 3 * 86400000).toISOString());
   txnStmt.run(genId("txn"), p2, "OUT", 8, "Jae", null, 850, new Date(now - 1 * 86400000).toISOString());
   txnStmt.run(genId("txn"), p3, "OUT", 6, "Mika", null, 95, new Date(now - 8 * 3600000).toISOString());
+  txnStmt.run(genId("txn"), p3, "DISCARD", 2, "Vhong", null, 70, new Date(now - 5 * 3600000).toISOString());
   console.log("Seeded starter data.");
 }
 
@@ -290,11 +291,14 @@ app.post("/api/products", requireAuth, requireAdmin, (req, res) => {
   res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(id));
 });
 
-app.patch("/api/products/:id/toggle", requireAuth, requireAdmin, (req, res) => {
+app.patch("/api/products/:id/status", requireAuth, requireAdmin, (req, res) => {
+  const { status } = req.body || {};
+  if (!["active", "hold", "stopped"].includes(status)) {
+    return res.status(400).json({ error: "Status must be active, hold, or stopped" });
+  }
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
   if (!product) return res.status(404).json({ error: "Product not found" });
-  const next = product.status === "active" ? "stopped" : "active";
-  db.prepare("UPDATE products SET status = ? WHERE id = ?").run(next, product.id);
+  db.prepare("UPDATE products SET status = ? WHERE id = ?").run(status, product.id);
   res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(product.id));
 });
 
@@ -305,19 +309,22 @@ app.delete("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
   res.json({ ok: true, id: product.id });
 });
 
-/* ---------------- Transactions (product in / out) ---------------- */
+/* ---------------- Transactions (product in / out / discard) ---------------- */
 app.post("/api/transactions", requireAuth, (req, res) => {
   const { productId, type, qty, staff, supplierId, price, timestamp } = req.body || {};
   if (!productId || !type || !qty || !staff) return res.status(400).json({ error: "Product, quantity, and staff name are required" });
+  if (!["IN", "OUT", "DISCARD"].includes(type)) return res.status(400).json({ error: "Invalid movement type" });
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(productId);
   if (!product) return res.status(404).json({ error: "Product not found" });
   const quantity = Number(qty);
-  if (type === "OUT" && quantity > product.stock) {
+  if ((type === "OUT" || type === "DISCARD") && quantity > product.stock) {
     return res.status(400).json({ error: `Not enough stock \u2014 only ${product.stock} left` });
   }
   const id = genId("txn");
   const ts = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
-  const unitPrice = price !== undefined && price !== "" ? Number(price) : (type === "IN" ? product.purchase_price : product.retail_price);
+  const unitPrice = price !== undefined && price !== ""
+    ? Number(price)
+    : (type === "IN" || type === "DISCARD") ? product.purchase_price : product.retail_price;
   db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)")
     .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, ts);
   const newStock = type === "IN" ? product.stock + quantity : product.stock - quantity;
