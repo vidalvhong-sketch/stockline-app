@@ -696,13 +696,14 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
     [periodTransactions]
   );
 
-  const totalNetSales = (totalRetailSales + totalMarketSales) - totalStockCostValue;
+  const totalSalesRevenue = totalRetailSales + totalMarketSales;
 
   const stats = [
+    { label: "Stock cost (supplier rate)", value: fmtMoney(totalStockCostValue), alwaysCurrent: true },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
     { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
     { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
-    { label: "Net sales (sales \u2212 stock cost)", value: fmtMoney(totalNetSales), negative: totalNetSales < 0, mixedPeriod: true },
+    { label: "Total sales / revenue", value: fmtMoney(totalSalesRevenue) },
   ];
 
   return (
