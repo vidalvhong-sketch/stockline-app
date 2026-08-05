@@ -312,6 +312,13 @@ app.patch("/api/suppliers/:id", requireAuth, requireAdmin, (req, res) => {
   res.json(db.prepare("SELECT * FROM suppliers WHERE id = ?").get(supplier.id));
 });
 
+app.delete("/api/suppliers/:id", requireAuth, requireAdmin, (req, res) => {
+  const supplier = db.prepare("SELECT * FROM suppliers WHERE id = ?").get(req.params.id);
+  if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+  db.prepare("DELETE FROM suppliers WHERE id = ?").run(supplier.id);
+  res.json({ ok: true, id: supplier.id });
+});
+
 /* ---------------- Products ---------------- */
 app.post("/api/products", requireAuth, requireAdmin, (req, res) => {
   const { name, category, stock, barcode, unit, purchasePrice, retailPrice, marketPrice } = req.body || {};

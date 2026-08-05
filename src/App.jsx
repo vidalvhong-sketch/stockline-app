@@ -522,6 +522,16 @@ export default function App() {
     }
   }
 
+  async function deleteSupplier(id, name) {
+    try {
+      await api.deleteSupplier(id);
+      setSuppliers((prev) => prev.filter((s) => s.id !== id));
+      showToast(`${name} deleted`, "out");
+    } catch (err) {
+      showToast(err.message, "out");
+    }
+  }
+
   async function addProduct(prod) {
     try {
       const created = await api.addProduct(prod);
@@ -626,7 +636,7 @@ export default function App() {
       {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
       {view === "pos" && <PosView products={products} staffName={agentName} onLog={logMovement} isMobile={isMobile} />}
       {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onEdit={editProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} isMobile={isMobile} />}
-      {view === "suppliers" && <SuppliersView suppliers={suppliers} products={products} transactions={transactions} onAdd={addSupplier} onEdit={editSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
+      {view === "suppliers" && <SuppliersView suppliers={suppliers} products={products} transactions={transactions} onAdd={addSupplier} onEdit={editSupplier} onDelete={deleteSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
       {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} onLog={logMovement} staffName={agentName} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "agents" && isAdmin && <AgentsView currentAgentName={agentName} showToast={showToast} isMobile={isMobile} />}
@@ -1219,7 +1229,7 @@ function downloadAllData(products, suppliers, transactions) {
   XLSX.writeFile(wb, `stockline-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
-function SuppliersView({ suppliers, products, transactions, onAdd, onEdit, isAdmin, isMobile }) {
+function SuppliersView({ suppliers, products, transactions, onAdd, onEdit, onDelete, isAdmin, isMobile }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: "", contact: "", phone: "" });
@@ -1310,12 +1320,25 @@ function SuppliersView({ suppliers, products, transactions, onAdd, onEdit, isAdm
               <div style={{ ...fontDisplay, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 6 }}>{s.name}</div>
               {s.contact && <div style={{ fontSize: 13, color: T.textMuted }}>{s.contact}</div>}
               {s.phone && <div style={{ ...fontMono, fontSize: 12, color: T.textFaint, marginTop: 2 }}>{s.phone}</div>}
-              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                 <Badge>{deliveryCount(s.id)} deliveries logged</Badge>
                 {isAdmin && (
-                  <Button variant="ghost" style={{ padding: "5px 8px", fontSize: 11 }} onClick={() => openEditForm(s)}>
-                    <Pencil size={12} />Edit
-                  </Button>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Button variant="ghost" style={{ padding: "5px 8px", fontSize: 11 }} onClick={() => openEditForm(s)}>
+                      <Pencil size={12} />Edit
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      style={{ padding: "5px 8px", fontSize: 11, color: T.out }}
+                      onClick={() => {
+                        if (window.confirm(`Delete "${s.name}"? This can't be undone. Past movement history will show it as a deleted supplier instead of being removed.`)) {
+                          onDelete(s.id, s.name);
+                        }
+                      }}
+                    >
+                      <Trash2 size={12} />Delete
+                    </Button>
+                  </div>
                 )}
               </div>
               <button
