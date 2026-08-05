@@ -160,6 +160,12 @@ if (!alreadyPurged) {
 function genId(prefix) {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
+// Rounds to 3 decimal places to avoid floating point drift (e.g. 15.45 - 2.3
+// computing as 13.149999999999999 in IEEE 754 arithmetic) while still
+// preserving enough precision for weight/volume units like kg or liters.
+function roundQty(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 1000) / 1000;
+}
 function genBarcode() {
   let code = "";
   for (let i = 0; i < 12; i++) code += Math.floor(Math.random() * 10);
@@ -308,7 +314,7 @@ app.post("/api/products", requireAuth, requireAdmin, (req, res) => {
   const hasMarket = marketPrice !== undefined && marketPrice !== null && String(marketPrice).trim() !== "";
   try {
     db.prepare("INSERT INTO products (id, barcode, name, category, purchase_price, retail_price, market_price, stock, status, unit) VALUES (?,?,?,?,?,?,?,?,?,?)")
-      .run(id, code, name, category, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, Number(stock) || 0, "active", (unit && unit.trim()) || "pcs");
+      .run(id, code, name, category, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, roundQty(Number(stock) || 0), "active", (unit && unit.trim()) || "pcs");
   } catch (e) {
     return res.status(400).json({ error: "That barcode is already in use" });
   }
@@ -336,7 +342,7 @@ app.patch("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
   const code = (barcode && barcode.trim()) || product.barcode;
   const hasMarket = marketPrice !== undefined && marketPrice !== null && String(marketPrice).trim() !== "";
   const hasStock = stock !== undefined && stock !== null && String(stock).trim() !== "";
-  const nextStock = hasStock ? Math.max(0, Number(stock)) : product.stock;
+  const nextStock = hasStock ? Math.max(0, roundQty(Number(stock))) : product.stock;
   try {
     db.prepare("UPDATE products SET name = ?, category = ?, unit = ?, barcode = ?, purchase_price = ?, retail_price = ?, market_price = ?, stock = ? WHERE id = ?")
       .run(name, category, (unit && unit.trim()) || "pcs", code, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, nextStock, product.id);
@@ -360,7 +366,7 @@ app.post("/api/transactions", requireAuth, (req, res) => {
   if (!["IN", "OUT", "DISCARD"].includes(type)) return res.status(400).json({ error: "Invalid movement type" });
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(productId);
   if (!product) return res.status(404).json({ error: "Product not found" });
-  const quantity = Number(qty);
+  const quantity = roundQty(Number(qty));
   if ((type === "OUT" || type === "DISCARD") && quantity > product.stock) {
     return res.status(400).json({ error: `Not enough stock \u2014 only ${product.stock} left` });
   }
@@ -379,7 +385,7 @@ app.post("/api/transactions", requireAuth, (req, res) => {
   }
   db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, market_price, timestamp) VALUES (?,?,?,?,?,?,?,?,?)")
     .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, marketPriceValue, ts);
-  const newStock = type === "IN" ? product.stock + quantity : product.stock - quantity;
+  const newStock = roundQty(type === "IN" ? product.stock + quantity : product.stock - quantity);
   db.prepare("UPDATE products SET stock = ? WHERE id = ?").run(newStock, productId);
   res.json({
     transaction: db.prepare("SELECT * FROM transactions WHERE id = ?").get(id),
