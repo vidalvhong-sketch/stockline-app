@@ -5,8 +5,9 @@ import {
 import {
   LayoutDashboard, Package, Truck, ArrowLeftRight, ScanBarcode, Plus, X,
   ArrowDownToLine, ArrowUpFromLine, Ban, RotateCcw, Search, AlertTriangle, CheckCircle2, LogOut,
-  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette,
+  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette, Download, ChevronDown, ChevronUp,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -509,6 +510,18 @@ export default function App() {
     }
   }
 
+  async function editSupplier(id, sup) {
+    try {
+      const updated = await api.editSupplier(id, sup);
+      setSuppliers((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      showToast(`${updated.name} updated`, "in");
+      return true;
+    } catch (err) {
+      showToast(err.message, "out");
+      return false;
+    }
+  }
+
   async function addProduct(prod) {
     try {
       const created = await api.addProduct(prod);
@@ -613,7 +626,7 @@ export default function App() {
       {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
       {view === "pos" && <PosView products={products} staffName={agentName} onLog={logMovement} isMobile={isMobile} />}
       {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onEdit={editProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} isMobile={isMobile} />}
-      {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
+      {view === "suppliers" && <SuppliersView suppliers={suppliers} products={products} transactions={transactions} onAdd={addSupplier} onEdit={editSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
       {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} onLog={logMovement} staffName={agentName} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "agents" && isAdmin && <AgentsView currentAgentName={agentName} showToast={showToast} isMobile={isMobile} />}
@@ -1177,27 +1190,98 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
 /* ---------------------------------------------------------------
    SUPPLIERS VIEW
 --------------------------------------------------------------- */
-function SuppliersView({ suppliers, transactions, onAdd, isAdmin, isMobile }) {
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", contact: "", phone: "" });
+function downloadAllData(products, suppliers, transactions) {
+  const wb = XLSX.utils.book_new();
 
-  function submit(e) {
+  const productRows = products.map((p) => ({
+    Barcode: p.barcode, Name: p.name, Category: p.category, Unit: p.unit,
+    "Purchase Price": p.purchase_price, "Retail Price": p.retail_price, "Market Price": p.market_price,
+    Stock: p.stock, Status: p.status,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(productRows), "Products");
+
+  const supplierRows = suppliers.map((s) => ({ Name: s.name, Contact: s.contact, Phone: s.phone }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(supplierRows), "Suppliers");
+
+  const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+  const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s]));
+  const txnRows = transactions.map((t) => {
+    const p = productMap[t.product_id || t.productId];
+    const s = supplierMap[t.supplier_id || t.supplierId];
+    return {
+      Type: t.type, Product: p ? p.name : "Deleted product", Quantity: t.qty, Unit: p ? p.unit : "",
+      Price: t.price, "Market Price": t.market_price ?? "", Supplier: s ? s.name : "",
+      Staff: t.staff, Timestamp: t.timestamp,
+    };
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txnRows), "Movement Log");
+
+  XLSX.writeFile(wb, `stockline-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function SuppliersView({ suppliers, products, transactions, onAdd, onEdit, isAdmin, isMobile }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ name: "", contact: "", phone: "" });
+  const [expandedId, setExpandedId] = useState(null);
+
+  function openAddForm() {
+    setEditingId(null);
+    setForm({ name: "", contact: "", phone: "" });
+    setShowForm(true);
+  }
+  function openEditForm(s) {
+    setEditingId(s.id);
+    setForm({ name: s.name, contact: s.contact || "", phone: s.phone || "" });
+    setShowForm(true);
+  }
+  function closeForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setForm({ name: "", contact: "", phone: "" });
+  }
+
+  async function submit(e) {
     e.preventDefault();
     if (!form.name) return;
-    onAdd(form);
-    setForm({ name: "", contact: "", phone: "" });
-    setShowForm(false);
+    if (editingId) {
+      const ok = await onEdit(editingId, form);
+      if (ok !== false) closeForm();
+    } else {
+      onAdd(form);
+      closeForm();
+    }
   }
 
   const deliveryCount = (supplierId) => transactions.filter((t) => t.type === "IN" && (t.supplier_id === supplierId || t.supplierId === supplierId)).length;
 
+  function suppliedProducts(supplierId) {
+    const ids = new Set(
+      transactions.filter((t) => t.type === "IN" && (t.supplier_id === supplierId || t.supplierId === supplierId))
+        .map((t) => t.product_id || t.productId)
+    );
+    return products.filter((p) => ids.has(p.id));
+  }
+
   return (
     <div>
       <SectionHeader eyebrow="Vendors" title="Suppliers" action={
-        isAdmin && <Button variant="amber" onClick={() => setShowForm((s) => !s)}>{showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? "Cancel" : "Add supplier"}</Button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button variant="ghost" onClick={() => downloadAllData(products, suppliers, transactions)}>
+            <Download size={14} />Download all data
+          </Button>
+          {isAdmin && (
+            <Button variant="amber" onClick={() => (showForm ? closeForm() : openAddForm())}>
+              {showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? "Cancel" : "Add supplier"}
+            </Button>
+          )}
+        </div>
       } />
       {isAdmin && showForm && (
         <Card style={{ marginBottom: 20 }}>
+          <div style={{ ...fontMono, fontSize: 11, color: T.amber, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>
+            {editingId ? "Editing supplier" : "New supplier"}
+          </div>
           <form onSubmit={submit}>
             <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "2fr 1fr 1fr"), gap: 12, marginBottom: 14 }}>
               <div>
@@ -1213,21 +1297,54 @@ function SuppliersView({ suppliers, transactions, onAdd, isAdmin, isMobile }) {
                 <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Optional" />
               </div>
             </div>
-            <Button type="submit" variant="in"><Plus size={14} />Save supplier</Button>
+            <Button type="submit" variant="in">{editingId ? <><Pencil size={14} />Save changes</> : <><Plus size={14} />Save supplier</>}</Button>
           </form>
         </Card>
       )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
-        {suppliers.map((s) => (
-          <Card key={s.id}>
-            <div style={{ ...fontDisplay, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 6 }}>{s.name}</div>
-            {s.contact && <div style={{ fontSize: 13, color: T.textMuted }}>{s.contact}</div>}
-            {s.phone && <div style={{ ...fontMono, fontSize: 12, color: T.textFaint, marginTop: 2 }}>{s.phone}</div>}
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` }}>
-              <Badge>{deliveryCount(s.id)} deliveries logged</Badge>
-            </div>
-          </Card>
-        ))}
+        {suppliers.map((s) => {
+          const items = suppliedProducts(s.id);
+          const expanded = expandedId === s.id;
+          return (
+            <Card key={s.id}>
+              <div style={{ ...fontDisplay, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 6 }}>{s.name}</div>
+              {s.contact && <div style={{ fontSize: 13, color: T.textMuted }}>{s.contact}</div>}
+              {s.phone && <div style={{ ...fontMono, fontSize: 12, color: T.textFaint, marginTop: 2 }}>{s.phone}</div>}
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <Badge>{deliveryCount(s.id)} deliveries logged</Badge>
+                {isAdmin && (
+                  <Button variant="ghost" style={{ padding: "5px 8px", fontSize: 11 }} onClick={() => openEditForm(s)}>
+                    <Pencil size={12} />Edit
+                  </Button>
+                )}
+              </div>
+              <button
+                onClick={() => setExpandedId(expanded ? null : s.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, marginTop: 10, background: "transparent", border: "none",
+                  color: T.textMuted, cursor: "pointer", fontSize: 12, padding: 0, ...fontBody,
+                }}
+              >
+                {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                {items.length} product{items.length === 1 ? "" : "s"} from this supplier
+              </button>
+              {expanded && (
+                <div style={{ marginTop: 8 }}>
+                  {items.length === 0 ? (
+                    <div style={{ fontSize: 12, color: T.textFaint }}>No stock-in deliveries logged for this supplier yet.</div>
+                  ) : (
+                    items.map((p) => (
+                      <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${T.border}`, fontSize: 12 }}>
+                        <span style={{ color: T.text }}>{p.name}</span>
+                        <span style={{ ...fontMono, color: T.textFaint }}>{p.stock} {p.unit || "pcs"}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </Card>
+          );
+        })}
         {suppliers.length === 0 && <div style={{ color: T.textFaint, fontSize: 13 }}>No suppliers yet.</div>}
       </div>
     </div>

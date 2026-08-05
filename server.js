@@ -303,6 +303,15 @@ app.post("/api/suppliers", requireAuth, requireAdmin, (req, res) => {
   res.json(db.prepare("SELECT * FROM suppliers WHERE id = ?").get(id));
 });
 
+app.patch("/api/suppliers/:id", requireAuth, requireAdmin, (req, res) => {
+  const supplier = db.prepare("SELECT * FROM suppliers WHERE id = ?").get(req.params.id);
+  if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+  const { name, contact, phone } = req.body || {};
+  if (!name) return res.status(400).json({ error: "Supplier name is required" });
+  db.prepare("UPDATE suppliers SET name = ?, contact = ?, phone = ? WHERE id = ?").run(name, contact || "", phone || "", supplier.id);
+  res.json(db.prepare("SELECT * FROM suppliers WHERE id = ?").get(supplier.id));
+});
+
 /* ---------------- Products ---------------- */
 app.post("/api/products", requireAuth, requireAdmin, (req, res) => {
   const { name, category, stock, barcode, unit, purchasePrice, retailPrice, marketPrice } = req.body || {};
