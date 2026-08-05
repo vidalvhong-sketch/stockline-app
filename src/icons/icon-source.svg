@@ -1,0 +1,25 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1B2330"/>
+      <stop offset="1" stop-color="#141A22"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- barcode mark, centered -->
+  <g transform="translate(106,176)">
+    <rect x="0"   y="0" width="16" height="160" fill="#F2B705"/>
+    <rect x="28"  y="0" width="8"  height="160" fill="#EDEFF2"/>
+    <rect x="48"  y="0" width="20" height="160" fill="#EDEFF2"/>
+    <rect x="80"  y="0" width="8"  height="160" fill="#EDEFF2"/>
+    <rect x="100" y="0" width="14" height="160" fill="#F2B705"/>
+    <rect x="126" y="0" width="8"  height="160" fill="#EDEFF2"/>
+    <rect x="146" y="0" width="20" height="160" fill="#EDEFF2"/>
+    <rect x="178" y="0" width="10" height="160" fill="#EDEFF2"/>
+    <rect x="200" y="0" width="16" height="160" fill="#F2B705"/>
+    <rect x="228" y="0" width="8"  height="160" fill="#EDEFF2"/>
+    <rect x="248" y="0" width="20" height="160" fill="#EDEFF2"/>
+    <rect x="280" y="0" width="12" height="160" fill="#EDEFF2"/>
+    <rect x="300" y="0" width="16" height="160" fill="#F2B705"/>
+  </g>
+</svg>

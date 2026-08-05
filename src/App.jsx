@@ -5,7 +5,7 @@ import {
 import {
   LayoutDashboard, Package, Truck, ArrowLeftRight, ScanBarcode, Plus, X,
   ArrowDownToLine, ArrowUpFromLine, Ban, RotateCcw, Search, AlertTriangle, CheckCircle2, LogOut,
-  Users, KeyRound, Trash2, ShieldCheck,
+  Users, KeyRound, Trash2, ShieldCheck, Pencil,
 } from "lucide-react";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
 
@@ -38,8 +38,23 @@ const fontBody = { fontFamily: "'Inter', sans-serif" };
 
 const COMMON_UNITS = ["pcs", "kg", "g", "sack", "pack", "box", "ream", "liter", "roll", "dozen", "set", "bottle"];
 
-function statusTone(status) {
-  if (status === "active") return "in";
+const MOBILE_BREAKPOINT = 720;
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT);
+  useEffect(() => {
+    function onResize() { setIsMobile(window.innerWidth < MOBILE_BREAKPOINT); }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return isMobile;
+}
+
+// Collapses a multi-column form grid to a single column on mobile.
+function gridCols(isMobile, desktopTemplate) {
+  return isMobile ? "1fr" : desktopTemplate;
+}
+
+function statusTone(status) {  if (status === "active") return "in";
   if (status === "hold") return "amber";
   return "out"; // stopped
 }
@@ -225,9 +240,7 @@ function DangerZoneCard({ onPurgeBefore }) {
         <div style={{ ...fontDisplay, fontSize: 14, fontWeight: 700, color: T.out }}>Danger zone</div>
       </div>
       <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
-        Permanently deletes movement history before a chosen date \u2014 useful for clearing out old test data
-        or resetting the dashboard graph and totals to start fresh from a specific point. This does not change
-        current stock levels, only the historical log and the dashboard's totals/chart.
+        {"Permanently deletes movement history before a chosen date \u2014 useful for clearing out old test data or resetting the dashboard graph and totals to start fresh from a specific point. This does not change current stock levels, only the historical log and the dashboard's totals/chart."}
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: purgeDate ? 14 : 0 }}>
         <div>
@@ -293,8 +306,8 @@ function Login({ onLoggedIn }) {
   }
 
   return (
-    <div style={{ background: T.bg, minHeight: 500, display: "flex", alignItems: "center", justifyContent: "center", ...fontBody }}>
-      <form onSubmit={submit} style={{ width: 320, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: 28 }}>
+    <div style={{ background: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", ...fontBody }}>
+      <form onSubmit={submit} style={{ width: "100%", maxWidth: 320, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: 28, boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <ScanBarcode size={20} color={T.amber} />
           <div style={{ ...fontDisplay, fontWeight: 700, fontSize: 19, color: T.text }}>STOCKLINE</div>
@@ -387,6 +400,18 @@ export default function App() {
     }
   }
 
+  async function editProduct(id, prod) {
+    try {
+      const updated = await api.editProduct(id, prod);
+      setProducts((prev) => prev.map((p) => (p.id === id ? updated : p)));
+      showToast(`${updated.name} updated`, "in");
+      return true;
+    } catch (err) {
+      showToast(err.message, "out");
+      return false;
+    }
+  }
+
   async function setProductStatus(productId, status) {
     try {
       const updated = await api.setProductStatus(productId, status);
@@ -447,6 +472,8 @@ export default function App() {
     ...(isAdmin ? [{ key: "agents", label: "Agents", icon: Users }] : []),
   ];
 
+  const isMobile = useIsMobile();
+
   if (!agentName) {
     return <Login onLoggedIn={setAgentName} />;
   }
@@ -455,6 +482,93 @@ export default function App() {
     return (
       <div style={{ background: T.bg, minHeight: 500, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: T.textMuted, ...fontMono, gap: 12 }}>
         {loadError ? <div style={{ color: T.out }}>{loadError}</div> : "loading inventory..."}
+      </div>
+    );
+  }
+
+  const currentNavLabel = navItems.find((n) => n.key === view)?.label || "STOCKLINE";
+
+  const mainContent = (
+    <>
+      {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
+      {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onEdit={editProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} isMobile={isMobile} />}
+      {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
+      {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
+      {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} isAdmin={isAdmin} isMobile={isMobile} />}
+      {view === "agents" && isAdmin && <AgentsView currentAgentName={agentName} showToast={showToast} isMobile={isMobile} />}
+    </>
+  );
+
+  const toastEl = toast && (
+    <div style={{
+      position: "fixed", top: isMobile ? 60 : 20, left: isMobile ? 12 : "auto", right: isMobile ? 12 : 28, zIndex: 30,
+      background: toast.tone === "in" ? T.inDim : toast.tone === "out" ? T.outDim : T.surfaceRaised,
+      border: `1px solid ${toast.tone === "in" ? T.in : toast.tone === "out" ? T.out : T.border}`,
+      color: T.text, padding: "10px 16px", borderRadius: 4, fontSize: 13, ...fontBody,
+      display: "flex", alignItems: "center", gap: 8,
+    }}>
+      {toast.tone === "in" ? <CheckCircle2 size={15} color={T.in} /> : toast.tone === "out" ? <AlertTriangle size={15} color={T.out} /> : null}
+      {toast.msg}
+    </div>
+  );
+
+  if (isMobile) {
+    return (
+      <div style={{ background: T.bg, minHeight: "100vh", ...fontBody }}>
+        {/* Top bar */}
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, height: 52, zIndex: 20,
+          background: T.surface, borderBottom: `1px solid ${T.border}`,
+          display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 14px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <ScanBarcode size={16} color={T.amber} style={{ flexShrink: 0 }} />
+            <span style={{ ...fontDisplay, fontWeight: 700, fontSize: 14, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {currentNavLabel}
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <Badge tone={isAdmin ? "amber" : "default"}>{agentName}</Badge>
+            <button onClick={logout} style={{ background: "transparent", border: "none", color: T.textMuted, padding: 6, cursor: "pointer", display: "flex" }}>
+              <LogOut size={16} />
+            </button>
+          </div>
+        </div>
+
+        {toastEl}
+
+        {/* Content */}
+        <div style={{ paddingTop: 68, paddingBottom: 76, paddingLeft: 14, paddingRight: 14 }}>
+          {mainContent}
+        </div>
+
+        {/* Bottom tab bar */}
+        <div style={{
+          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 20,
+          background: T.surface, borderTop: `1px solid ${T.border}`,
+          display: "flex", paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}>
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const active = view === item.key;
+            return (
+              <button
+                key={item.key}
+                onClick={() => setView(item.key)}
+                style={{
+                  flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                  padding: "9px 2px 8px", background: "transparent", border: "none", cursor: "pointer",
+                  color: active ? T.amber : T.textFaint,
+                }}
+              >
+                <Icon size={19} />
+                <span style={{ ...fontMono, fontSize: 9, letterSpacing: "0.02em", whiteSpace: "nowrap" }}>
+                  {item.label.split(" ")[0]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     );
   }
@@ -496,25 +610,8 @@ export default function App() {
       </div>
 
       <div style={{ flex: 1, padding: 28, minWidth: 0, position: "relative" }}>
-        {toast && (
-          <div style={{
-            position: "fixed", top: 20, right: 28, zIndex: 10,
-            background: toast.tone === "in" ? T.inDim : toast.tone === "out" ? T.outDim : T.surfaceRaised,
-            border: `1px solid ${toast.tone === "in" ? T.in : toast.tone === "out" ? T.out : T.border}`,
-            color: T.text, padding: "10px 16px", borderRadius: 4, fontSize: 13, ...fontBody,
-            display: "flex", alignItems: "center", gap: 8,
-          }}>
-            {toast.tone === "in" ? <CheckCircle2 size={15} color={T.in} /> : toast.tone === "out" ? <AlertTriangle size={15} color={T.out} /> : null}
-            {toast.msg}
-          </div>
-        )}
-
-        {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} />}
-        {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} />}
-        {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} />}
-        {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} />}
-        {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} isAdmin={isAdmin} />}
-        {view === "agents" && isAdmin && <AgentsView currentAgentName={agentName} showToast={showToast} />}
+        {toastEl}
+        {mainContent}
       </div>
     </div>
   );
@@ -523,7 +620,7 @@ export default function App() {
 /* ---------------------------------------------------------------
    DASHBOARD
 --------------------------------------------------------------- */
-function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }) {
+function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, isMobile }) {
   const [granularity, setGranularity] = useState("daily");
   const counts = { daily: 14, weekly: 10, yearly: 5 };
 
@@ -584,6 +681,10 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }
   );
   const totalMarketSales = useMemo(
     () => periodTransactions.filter((t) => t.type === "OUT").reduce((s, t) => {
+      // Prefer the market price captured at the moment of sale; fall back to
+      // the product's current market price for older entries logged before
+      // this was tracked per-transaction.
+      if (t.market_price != null) return s + t.market_price * t.qty;
       const p = findProduct(t);
       return s + (p && p.market_price != null ? p.market_price * t.qty : 0);
     }, 0),
@@ -681,9 +782,9 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }
 
       <BarcodeDivider />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "1fr 1fr"), gap: 16 }}>
         <Card>
-          <Label>Low stock (\u226410 units)</Label>
+          <Label>{"Low stock (\u226410 units)"}</Label>
           {lowStock.length === 0 && outOfStock.length === 0 ? (
             <div style={{ color: T.textFaint, fontSize: 13, marginTop: 8 }}>Nothing running low.</div>
           ) : (
@@ -736,17 +837,51 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }
 /* ---------------------------------------------------------------
    PRODUCTS VIEW
 --------------------------------------------------------------- */
-function ProductsView({ products, categories, onAdd, onSetStatus, onDelete, isAdmin }) {
+function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDelete, isAdmin, isMobile }) {
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" });
   const [query, setQuery] = useState("");
 
-  function submit(e) {
+  const emptyForm = { name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" };
+
+  function openAddForm() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setShowForm(true);
+  }
+
+  function openEditForm(p) {
+    setEditingId(p.id);
+    setForm({
+      name: p.name,
+      category: p.category,
+      unit: p.unit || "pcs",
+      purchasePrice: String(p.purchase_price),
+      retailPrice: String(p.retail_price),
+      marketPrice: p.market_price != null ? String(p.market_price) : "",
+      stock: "",
+      barcode: p.barcode,
+    });
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setForm(emptyForm);
+  }
+
+  async function submit(e) {
     e.preventDefault();
     if (!form.name || !form.category || !form.purchasePrice || !form.retailPrice) return;
-    onAdd(form);
-    setForm({ name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" });
-    setShowForm(false);
+    if (editingId) {
+      const ok = await onEdit(editingId, form);
+      if (ok !== false) closeForm();
+    } else {
+      onAdd(form);
+      closeForm();
+    }
   }
 
   const filtered = products.filter((p) =>
@@ -758,13 +893,20 @@ function ProductsView({ products, categories, onAdd, onSetStatus, onDelete, isAd
   return (
     <div>
       <SectionHeader eyebrow="Catalog" title="Products" action={
-        isAdmin && <Button variant="amber" onClick={() => setShowForm((s) => !s)}>{showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? "Cancel" : "Add product"}</Button>
+        isAdmin && (
+          <Button variant="amber" onClick={() => (showForm ? closeForm() : openAddForm())}>
+            {showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? "Cancel" : "Add product"}
+          </Button>
+        )
       } />
 
       {isAdmin && showForm && (
         <Card style={{ marginBottom: 20 }}>
+          <div style={{ ...fontMono, fontSize: 11, color: T.amber, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>
+            {editingId ? "Editing product" : "New product"}
+          </div>
           <form onSubmit={submit}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "2fr 1fr 1fr"), gap: 12, marginBottom: 12 }}>
               <div>
                 <Label>Product name</Label>
                 <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. A4 Bond Paper" />
@@ -780,7 +922,7 @@ function ProductsView({ products, categories, onAdd, onSetStatus, onDelete, isAd
                 <datalist id="unit-list">{COMMON_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, editingId ? "1fr 1fr 1fr" : "1fr 1fr 1fr 1fr"), gap: 12, marginBottom: 12 }}>
               <div>
                 <Label>Purchase price (from supplier)</Label>
                 <Input required type="number" step="0.01" min="0" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} placeholder="0.00" />
@@ -793,16 +935,25 @@ function ProductsView({ products, categories, onAdd, onSetStatus, onDelete, isAd
                 <Label>Outside market price (optional)</Label>
                 <Input type="number" step="0.01" min="0" value={form.marketPrice} onChange={(e) => setForm({ ...form, marketPrice: e.target.value })} placeholder="0.00" />
               </div>
-              <div>
-                <Label>Starting stock</Label>
-                <Input type="number" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" />
-              </div>
+              {!editingId && (
+                <div>
+                  <Label>Starting stock</Label>
+                  <Input type="number" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" />
+                </div>
+              )}
             </div>
             <div style={{ marginBottom: 14, maxWidth: 260 }}>
-              <Label>Barcode (leave blank to auto-generate)</Label>
+              <Label>Barcode{editingId ? "" : " (leave blank to auto-generate)"}</Label>
               <Input value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} placeholder="auto" style={fontMono} />
             </div>
-            <Button type="submit" variant="in"><Plus size={14} />Save product</Button>
+            {editingId && (
+              <div style={{ fontSize: 11, color: T.textFaint, marginBottom: 14 }}>
+                {"Stock isn't edited here \u2014 log a stock in/out/discard entry in the Movement log to change it, so the history stays accurate."}
+              </div>
+            )}
+            <Button type="submit" variant="in">
+              {editingId ? <><Pencil size={14} />Save changes</> : <><Plus size={14} />Save product</>}
+            </Button>
           </form>
         </Card>
       )}
@@ -858,17 +1009,26 @@ function ProductsView({ products, categories, onAdd, onSetStatus, onDelete, isAd
                   </td>
                   <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                     {isAdmin && (
-                      <Button
-                        variant="ghost"
-                        style={{ padding: "5px 10px", fontSize: 11, color: T.out }}
-                        onClick={() => {
-                          if (window.confirm(`Delete "${p.name}"? This can't be undone. Past movement history will show it as a deleted product instead of being removed.`)) {
-                            onDelete(p.id, p.name);
-                          }
-                        }}
-                      >
-                        <Trash2 size={12} />Delete
-                      </Button>
+                      <>
+                        <Button
+                          variant="ghost"
+                          style={{ padding: "5px 10px", fontSize: 11, marginRight: 6 }}
+                          onClick={() => openEditForm(p)}
+                        >
+                          <Pencil size={12} />Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          style={{ padding: "5px 10px", fontSize: 11, color: T.out }}
+                          onClick={() => {
+                            if (window.confirm(`Delete "${p.name}"? This can't be undone. Past movement history will show it as a deleted product instead of being removed.`)) {
+                              onDelete(p.id, p.name);
+                            }
+                          }}
+                        >
+                          <Trash2 size={12} />Delete
+                        </Button>
+                      </>
                     )}
                   </td>
                 </tr>
@@ -888,7 +1048,7 @@ function ProductsView({ products, categories, onAdd, onSetStatus, onDelete, isAd
 /* ---------------------------------------------------------------
    SUPPLIERS VIEW
 --------------------------------------------------------------- */
-function SuppliersView({ suppliers, transactions, onAdd, isAdmin }) {
+function SuppliersView({ suppliers, transactions, onAdd, isAdmin, isMobile }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", contact: "", phone: "" });
 
@@ -910,7 +1070,7 @@ function SuppliersView({ suppliers, transactions, onAdd, isAdmin }) {
       {isAdmin && showForm && (
         <Card style={{ marginBottom: 20 }}>
           <form onSubmit={submit}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "2fr 1fr 1fr"), gap: 12, marginBottom: 14 }}>
               <div>
                 <Label>Supplier name</Label>
                 <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Metro Paper Trading" />
@@ -948,13 +1108,14 @@ function SuppliersView({ suppliers, transactions, onAdd, isAdmin }) {
 /* ---------------------------------------------------------------
    MOVEMENT VIEW
 --------------------------------------------------------------- */
-function MovementView({ products, suppliers, transactions, onLog, defaultStaff, isAdmin, onPurgeBefore }) {
+function MovementView({ products, suppliers, transactions, onLog, defaultStaff, isAdmin, onPurgeBefore, isMobile }) {
   const [type, setType] = useState("IN");
   const [productId, setProductId] = useState("");
   const [qty, setQty] = useState("");
   const [staff, setStaff] = useState(defaultStaff || "");
   const [supplierId, setSupplierId] = useState("");
   const [price, setPrice] = useState("");
+  const [marketPrice, setMarketPrice] = useState("");
   const [timestamp, setTimestamp] = useState("");
   const [filterType, setFilterType] = useState("ALL");
   const [dateFrom, setDateFrom] = useState("");
@@ -963,7 +1124,10 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
   const selectedProduct = products.find((p) => p.id === productId);
 
   useEffect(() => {
-    if (selectedProduct) setPrice(type === "OUT" ? selectedProduct.retail_price : selectedProduct.purchase_price);
+    if (selectedProduct) {
+      setPrice(type === "OUT" ? selectedProduct.retail_price : selectedProduct.purchase_price);
+      setMarketPrice(selectedProduct.market_price != null ? selectedProduct.market_price : "");
+    }
   }, [productId, type]);
 
   async function submit(e) {
@@ -971,7 +1135,8 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
     if (!productId || !qty || !staff) return;
     const ok = await onLog({
       productId, type, qty: Number(qty), staff, supplierId: supplierId || null,
-      price: Number(price), timestamp: timestamp ? new Date(timestamp).toISOString() : undefined,
+      price: Number(price), marketPrice: type === "OUT" && marketPrice !== "" ? Number(marketPrice) : undefined,
+      timestamp: timestamp ? new Date(timestamp).toISOString() : undefined,
     });
     if (ok !== false) { setQty(""); setSupplierId(""); setTimestamp(""); }
   }
@@ -1001,7 +1166,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
           <Button variant={type === "DISCARD" ? "waste" : "ghost"} onClick={() => setType("DISCARD")}><Trash2 size={14} />Discard / waste</Button>
         </div>
         <form onSubmit={submit}>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, type === "OUT" ? "2fr 1fr 1fr 1fr" : "2fr 1fr 1fr"), gap: 12, marginBottom: 12 }}>
             <div>
               <Label>Product</Label>
               <Select required value={productId} onChange={(e) => setProductId(e.target.value)}>
@@ -1017,8 +1182,14 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
               <Label>{type === "OUT" ? "Retail price (selling)" : type === "DISCARD" ? "Cost value (writing off)" : "Purchase price (from supplier)"}</Label>
               <Input type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
             </div>
+            {type === "OUT" && (
+              <div>
+                <Label>Market price (outside, for normal customer)</Label>
+                <Input type="number" step="0.01" min="0" value={marketPrice} onChange={(e) => setMarketPrice(e.target.value)} placeholder="Optional" />
+              </div>
+            )}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: type === "IN" ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, type === "IN" ? "1fr 1fr 1fr" : "1fr 1fr"), gap: 12, marginBottom: 14 }}>
             <div>
               <Label>{typeLabels[type].verb}</Label>
               <Input required value={staff} onChange={(e) => setStaff(e.target.value)} placeholder="Staff name" />
@@ -1085,7 +1256,8 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
       )}
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
               {["Type", "Product", "Qty", "Price", "Supplier", "Staff", "Timestamp"].map((h) => (
@@ -1102,7 +1274,12 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
                   <td style={{ padding: "10px 16px" }}><Badge tone={movementTone(t.type)}>{t.type}</Badge></td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p ? p.name : "Deleted product"}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{t.qty} {p ? (p.unit || "pcs") : ""}</td>
-                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textMuted }}>{fmtMoney(t.price)}</td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textMuted }}>
+                    {fmtMoney(t.price)}
+                    {t.market_price != null && (
+                      <div style={{ fontSize: 10, color: T.textFaint, marginTop: 2 }}>mkt: {fmtMoney(t.market_price)}</div>
+                    )}
+                  </td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{s ? s.name : "\u2014"}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{t.staff}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textFaint }}>{fmtDateTime(t.timestamp)}</td>
@@ -1114,6 +1291,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
             )}
           </tbody>
         </table>
+        </div>
       </Card>
 
       {isAdmin && (
@@ -1129,7 +1307,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
 /* ---------------------------------------------------------------
    BARCODE CONTROL VIEW
 --------------------------------------------------------------- */
-function BarcodeView({ products, onSetStatus, isAdmin }) {
+function BarcodeView({ products, onSetStatus, isAdmin, isMobile }) {
   const [code, setCode] = useState("");
   const [match, setMatch] = useState(null);
   const [notFound, setNotFound] = useState(false);
@@ -1170,7 +1348,7 @@ function BarcodeView({ products, onSetStatus, isAdmin }) {
           <Button type="submit" variant="amber"><Search size={14} />Look up</Button>
         </form>
         <div style={{ fontSize: 12, color: T.textFaint, marginTop: 8 }}>
-          Scanning with a USB/Bluetooth barcode scanner works too \u2014 it types the digits and hits enter automatically.
+          {"Scanning with a USB/Bluetooth barcode scanner works too \u2014 it types the digits and hits enter automatically."}
         </div>
       </Card>
 
@@ -1214,7 +1392,7 @@ function BarcodeView({ products, onSetStatus, isAdmin }) {
 
       <BarcodeDivider />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "1fr 1fr"), gap: 16 }}>
         <div>
           <Label>On hold ({held.length})</Label>
           <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
@@ -1262,7 +1440,7 @@ function BarcodeView({ products, onSetStatus, isAdmin }) {
 /* ---------------------------------------------------------------
    AGENTS VIEW (admin only) — add/remove agents, reset PINs
 --------------------------------------------------------------- */
-function AgentsView({ currentAgentName, showToast }) {
+function AgentsView({ currentAgentName, showToast, isMobile }) {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -1336,7 +1514,7 @@ function AgentsView({ currentAgentName, showToast }) {
       {showForm && (
         <Card style={{ marginBottom: 20 }}>
           <form onSubmit={submit}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "2fr 1fr 1fr"), gap: 12, marginBottom: 14 }}>
               <div>
                 <Label>Name</Label>
                 <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Jae" />
@@ -1372,7 +1550,8 @@ function AgentsView({ currentAgentName, showToast }) {
       )}
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
               {["Name", "Role", "Added", ""].map((h) => (
@@ -1406,6 +1585,7 @@ function AgentsView({ currentAgentName, showToast }) {
             )}
           </tbody>
         </table>
+        </div>
       </Card>
     </div>
   );

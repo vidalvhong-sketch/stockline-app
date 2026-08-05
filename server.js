@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   staff TEXT NOT NULL,
   supplier_id TEXT,
   price REAL NOT NULL DEFAULT 0,
+  market_price REAL,
   timestamp TEXT NOT NULL
 );
 `);
@@ -131,6 +132,15 @@ if (!productCols.includes("market_price")) db.exec("ALTER TABLE products ADD COL
 if (hadLegacyPrice && !hadPricingColumns) {
   db.exec("UPDATE products SET purchase_price = price, retail_price = price WHERE purchase_price = 0 AND retail_price = 0");
   console.log("Migrated products table: split price into purchase_price / retail_price / market_price.");
+}
+
+// Migration: add market_price snapshot to transactions (captures the outside
+// market price at the moment a sale was logged, for historically accurate
+// "market value" reporting instead of relying on the product's current value)
+const txnCols = db.prepare("PRAGMA table_info(transactions)").all().map((c) => c.name);
+if (!txnCols.includes("market_price")) {
+  db.exec("ALTER TABLE transactions ADD COLUMN market_price REAL");
+  console.log("Migrated transactions table: added market_price column.");
 }
 
 // One-time cleanup: the person running this app confirmed everything logged
@@ -316,6 +326,24 @@ app.patch("/api/products/:id/status", requireAuth, requireAdmin, (req, res) => {
   res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(product.id));
 });
 
+app.patch("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
+  const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  const { name, category, unit, barcode, purchasePrice, retailPrice, marketPrice } = req.body || {};
+  if (!name || !category || purchasePrice === undefined || retailPrice === undefined) {
+    return res.status(400).json({ error: "Name, category, purchase price, and retail price are required" });
+  }
+  const code = (barcode && barcode.trim()) || product.barcode;
+  const hasMarket = marketPrice !== undefined && marketPrice !== null && String(marketPrice).trim() !== "";
+  try {
+    db.prepare("UPDATE products SET name = ?, category = ?, unit = ?, barcode = ?, purchase_price = ?, retail_price = ?, market_price = ? WHERE id = ?")
+      .run(name, category, (unit && unit.trim()) || "pcs", code, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, product.id);
+  } catch (e) {
+    return res.status(400).json({ error: "That barcode is already in use" });
+  }
+  res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(product.id));
+});
+
 app.delete("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
   if (!product) return res.status(404).json({ error: "Product not found" });
@@ -325,7 +353,7 @@ app.delete("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
 
 /* ---------------- Transactions (product in / out / discard) ---------------- */
 app.post("/api/transactions", requireAuth, (req, res) => {
-  const { productId, type, qty, staff, supplierId, price, timestamp } = req.body || {};
+  const { productId, type, qty, staff, supplierId, price, marketPrice, timestamp } = req.body || {};
   if (!productId || !type || !qty || !staff) return res.status(400).json({ error: "Product, quantity, and staff name are required" });
   if (!["IN", "OUT", "DISCARD"].includes(type)) return res.status(400).json({ error: "Invalid movement type" });
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(productId);
@@ -339,8 +367,16 @@ app.post("/api/transactions", requireAuth, (req, res) => {
   const unitPrice = price !== undefined && price !== ""
     ? Number(price)
     : (type === "IN" || type === "DISCARD") ? product.purchase_price : product.retail_price;
-  db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)")
-    .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, ts);
+  // Market price snapshot only makes sense for a sale (OUT) \u2014 what this same
+  // sale would have cost the customer elsewhere, captured at the time of sale.
+  let marketPriceValue = null;
+  if (type === "OUT") {
+    marketPriceValue = marketPrice !== undefined && marketPrice !== ""
+      ? Number(marketPrice)
+      : (product.market_price != null ? product.market_price : null);
+  }
+  db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, market_price, timestamp) VALUES (?,?,?,?,?,?,?,?,?)")
+    .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, marketPriceValue, ts);
   const newStock = type === "IN" ? product.stock + quantity : product.stock - quantity;
   db.prepare("UPDATE products SET stock = ? WHERE id = ?").run(newStock, productId);
   res.json({
