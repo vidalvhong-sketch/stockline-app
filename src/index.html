@@ -20,6 +20,18 @@
       html, body, #root { height: 100%; margin: 0; }
       body { background: #0D1218; overscroll-behavior-y: contain; }
       * { -webkit-tap-highlight-color: transparent; }
+
+      @media print {
+        body * { visibility: hidden; }
+        .print-receipt, .print-receipt * { visibility: visible; }
+        .print-receipt {
+          position: absolute; top: 0; left: 0; width: 100%;
+        }
+        .print-receipt, .print-receipt * {
+          background: #fff !important; color: #000 !important; border-color: #ccc !important;
+        }
+        @page { margin: 12mm; }
+      }
     </style>
   </head>
   <body>

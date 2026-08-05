@@ -5,7 +5,7 @@ import {
 import {
   LayoutDashboard, Package, Truck, ArrowLeftRight, ScanBarcode, Plus, X,
   ArrowDownToLine, ArrowUpFromLine, Ban, RotateCcw, Search, AlertTriangle, CheckCircle2, LogOut,
-  Users, KeyRound, Trash2, ShieldCheck, Pencil,
+  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus,
 } from "lucide-react";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
 
@@ -466,6 +466,7 @@ export default function App() {
 
   const navItems = [
     { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { key: "pos", label: "Point of sale", icon: Receipt },
     { key: "products", label: "Products", icon: Package },
     { key: "suppliers", label: "Suppliers", icon: Truck },
     { key: "movement", label: "Movement log", icon: ArrowLeftRight },
@@ -492,6 +493,7 @@ export default function App() {
   const mainContent = (
     <>
       {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
+      {view === "pos" && <PosView products={products} staffName={agentName} onLog={logMovement} isMobile={isMobile} />}
       {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onEdit={editProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "suppliers" && <SuppliersView suppliers={suppliers} transactions={transactions} onAdd={addSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
@@ -1120,7 +1122,6 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
   const [staff, setStaff] = useState(defaultStaff || "");
   const [supplierId, setSupplierId] = useState("");
   const [price, setPrice] = useState("");
-  const [marketPrice, setMarketPrice] = useState("");
   const [timestamp, setTimestamp] = useState("");
   const [filterType, setFilterType] = useState("ALL");
   const [dateFrom, setDateFrom] = useState("");
@@ -1129,10 +1130,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
   const selectedProduct = products.find((p) => p.id === productId);
 
   useEffect(() => {
-    if (selectedProduct) {
-      setPrice(type === "OUT" ? selectedProduct.retail_price : selectedProduct.purchase_price);
-      setMarketPrice(selectedProduct.market_price != null ? selectedProduct.market_price : "");
-    }
+    if (selectedProduct) setPrice(selectedProduct.purchase_price);
   }, [productId, type]);
 
   async function submit(e) {
@@ -1140,7 +1138,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
     if (!productId || !qty || !staff) return;
     const ok = await onLog({
       productId, type, qty: Number(qty), staff, supplierId: supplierId || null,
-      price: Number(price), marketPrice: type === "OUT" && marketPrice !== "" ? Number(marketPrice) : undefined,
+      price: Number(price),
       timestamp: timestamp ? new Date(timestamp).toISOString() : undefined,
     });
     if (ok !== false) { setQty(""); setSupplierId(""); setTimestamp(""); }
@@ -1162,16 +1160,18 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
 
   return (
     <div>
-      <SectionHeader eyebrow="Movement" title="Product in / out / discard log" />
+      <SectionHeader eyebrow="Movement" title="Product in / discard log" />
 
       <Card style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14 }}>
+          {"Selling stock now happens through Point of Sale, which prints a receipt and logs the sale automatically. Use this page for restocking and writing off damaged or expired goods."}
+        </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <Button variant={type === "IN" ? "in" : "ghost"} onClick={() => setType("IN")}><ArrowDownToLine size={14} />Product in</Button>
-          <Button variant={type === "OUT" ? "out" : "ghost"} onClick={() => setType("OUT")}><ArrowUpFromLine size={14} />Product out</Button>
           <Button variant={type === "DISCARD" ? "waste" : "ghost"} onClick={() => setType("DISCARD")}><Trash2 size={14} />Discard / waste</Button>
         </div>
         <form onSubmit={submit}>
-          <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, type === "OUT" ? "2fr 1fr 1fr 1fr" : "2fr 1fr 1fr"), gap: 12, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, "2fr 1fr 1fr"), gap: 12, marginBottom: 12 }}>
             <div>
               <Label>Product</Label>
               <Select required value={productId} onChange={(e) => setProductId(e.target.value)}>
@@ -1184,15 +1184,9 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
               <Input required type="number" step="0.01" min="0.01" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" />
             </div>
             <div>
-              <Label>{type === "OUT" ? "Retail price (selling)" : type === "DISCARD" ? "Cost value (writing off)" : "Purchase price (from supplier)"}</Label>
+              <Label>{type === "DISCARD" ? "Cost value (writing off)" : "Purchase price (from supplier)"}</Label>
               <Input type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
             </div>
-            {type === "OUT" && (
-              <div>
-                <Label>Market price (outside, for normal customer)</Label>
-                <Input type="number" step="0.01" min="0" value={marketPrice} onChange={(e) => setMarketPrice(e.target.value)} placeholder="Optional" />
-              </div>
-            )}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: gridCols(isMobile, type === "IN" ? "1fr 1fr 1fr" : "1fr 1fr"), gap: 12, marginBottom: 14 }}>
             <div>
@@ -1312,6 +1306,240 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
 /* ---------------------------------------------------------------
    BARCODE CONTROL VIEW
 --------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   POINT OF SALE — cart checkout with printable receipt
+--------------------------------------------------------------- */
+function PosView({ products, staffName, onLog, isMobile }) {
+  const [cart, setCart] = useState([]); // {productId, name, unit, qty, unitPrice, marketPrice}
+  const [scanCode, setScanCode] = useState("");
+  const [scanError, setScanError] = useState("");
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [receipt, setReceipt] = useState(null);
+  const scanInputRef = useRef(null);
+
+  useEffect(() => { scanInputRef.current && scanInputRef.current.focus(); }, []);
+
+  function addToCart(product) {
+    setCart((prev) => {
+      const idx = prev.findIndex((r) => r.productId === product.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
+        return next;
+      }
+      return [...prev, {
+        productId: product.id, name: product.name, unit: product.unit || "pcs",
+        qty: 1, unitPrice: product.retail_price, marketPrice: product.market_price,
+      }];
+    });
+  }
+
+  function handleScanSubmit(e) {
+    e.preventDefault();
+    const trimmed = scanCode.trim();
+    if (!trimmed) return;
+    const product = products.find((p) => p.barcode === trimmed);
+    if (!product) {
+      setScanError(`No product with barcode ${trimmed}`);
+      setScanCode("");
+      scanInputRef.current && scanInputRef.current.focus();
+      return;
+    }
+    if (product.status !== "active") {
+      setScanError(`${product.name} is ${statusLabel(product.status)} and can't be sold right now`);
+      setScanCode("");
+      scanInputRef.current && scanInputRef.current.focus();
+      return;
+    }
+    setScanError("");
+    addToCart(product);
+    setScanCode("");
+    scanInputRef.current && scanInputRef.current.focus();
+  }
+
+  function updateQty(i, qty) {
+    setCart((prev) => prev.map((r, idx) => (idx === i ? { ...r, qty: Math.max(0.01, Number(qty) || 0.01) } : r)));
+  }
+  function updatePrice(i, price) {
+    setCart((prev) => prev.map((r, idx) => (idx === i ? { ...r, unitPrice: Math.max(0, Number(price) || 0) } : r)));
+  }
+  function removeLine(i) {
+    setCart((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  const subtotal = cart.reduce((s, r) => s + r.qty * r.unitPrice, 0);
+
+  async function completeSale() {
+    if (cart.length === 0) return;
+    setSaving(true);
+    const remaining = [];
+    const soldLines = [];
+    for (const row of cart) {
+      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice });
+      if (ok !== false) soldLines.push(row);
+      else remaining.push(row);
+    }
+    setCart(remaining);
+    if (soldLines.length > 0) {
+      setReceipt({
+        receiptNo: Date.now().toString(36).toUpperCase(),
+        timestamp: new Date().toISOString(),
+        staff: staffName,
+        items: soldLines,
+        total: soldLines.reduce((s, r) => s + r.qty * r.unitPrice, 0),
+      });
+    }
+    setSaving(false);
+    scanInputRef.current && scanInputRef.current.focus();
+  }
+
+  function newSale() {
+    setReceipt(null);
+    scanInputRef.current && scanInputRef.current.focus();
+  }
+
+  const pickerResults = pickerQuery.trim()
+    ? products.filter((p) => p.status === "active" && p.name.toLowerCase().includes(pickerQuery.toLowerCase())).slice(0, 6)
+    : [];
+
+  return (
+    <div>
+      <SectionHeader eyebrow="Checkout" title="Point of sale" />
+
+      {!receipt && (
+        <>
+          <Card style={{ marginBottom: 20 }}>
+            <Label>Scan barcode</Label>
+            <form onSubmit={handleScanSubmit} style={{ display: "flex", gap: 10, marginTop: 6, marginBottom: 16, flexWrap: "wrap" }}>
+              <Input ref={scanInputRef} value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanError(""); }} placeholder="e.g. 041982773610" style={{ ...fontMono, maxWidth: 320 }} autoFocus />
+              <Button type="submit" variant="amber"><Plus size={14} />Add to cart</Button>
+            </form>
+            {scanError && <div style={{ color: T.out, fontSize: 12, marginBottom: 12 }}>{scanError}</div>}
+
+            <Label>Or find a product</Label>
+            <div style={{ position: "relative", marginTop: 6, maxWidth: 360 }}>
+              <Input value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)} placeholder="Search product name" />
+              {pickerResults.length > 0 && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: T.surfaceRaised, border: `1px solid ${T.borderStrong}`, borderRadius: 4, zIndex: 5, overflow: "hidden" }}>
+                  {pickerResults.map((p) => (
+                    <div
+                      key={p.id}
+                      onClick={() => { addToCart(p); setPickerQuery(""); }}
+                      style={{ padding: "9px 12px", cursor: "pointer", fontSize: 13, color: T.text, borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}
+                    >
+                      <span>{p.name}</span>
+                      <span style={{ ...fontMono, fontSize: 12, color: T.textFaint }}>{fmtMoney(p.retail_price)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card style={{ marginBottom: 20 }}>
+            <Label>Cart {cart.length > 0 ? `(${cart.length})` : ""}</Label>
+            {cart.length === 0 ? (
+              <div style={{ color: T.textFaint, fontSize: 13, marginTop: 10 }}>Scan or search to add items.</div>
+            ) : (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                        {["Product", "Qty", "Unit price", "Line total", ""].map((h) => (
+                          <th key={h} style={{ textAlign: "left", padding: "8px 10px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cart.map((row, i) => (
+                        <tr key={i} style={{ borderBottom: `1px solid ${T.border}` }}>
+                          <td style={{ padding: "8px 10px", fontSize: 13, color: T.text }}>{row.name}<span style={{ color: T.textFaint, fontSize: 11 }}> / {row.unit}</span></td>
+                          <td style={{ padding: "8px 10px" }}>
+                            <Input type="number" step="0.01" min="0.01" value={row.qty} onChange={(e) => updateQty(i, e.target.value)} style={{ width: 70, padding: "5px 8px", fontSize: 12 }} />
+                          </td>
+                          <td style={{ padding: "8px 10px" }}>
+                            <Input type="number" step="0.01" min="0" value={row.unitPrice} onChange={(e) => updatePrice(i, e.target.value)} style={{ width: 90, padding: "5px 8px", fontSize: 12, ...fontMono }} />
+                          </td>
+                          <td style={{ padding: "8px 10px", ...fontMono, fontSize: 13, color: T.text }}>{fmtMoney(row.qty * row.unitPrice)}</td>
+                          <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                            <button onClick={() => removeLine(i)} style={{ background: "transparent", border: "none", color: T.textFaint, cursor: "pointer", padding: 4 }}>
+                              <X size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
+                  <div style={{ textAlign: "right" }}>
+                    <Label>Total</Label>
+                    <div style={{ ...fontDisplay, fontSize: 26, fontWeight: 700, color: T.text }}>{fmtMoney(subtotal)}</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                  <Button variant="in" onClick={completeSale} disabled={saving}>
+                    <CheckCircle2 size={14} />{saving ? "Processing\u2026" : "Complete sale"}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setCart([])} disabled={saving}>
+                    <X size={14} />Clear cart
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {receipt && (
+        <>
+          <Card style={{ marginBottom: 16, borderColor: T.in }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <CheckCircle2 size={16} color={T.in} />
+              <div style={{ ...fontDisplay, fontSize: 15, fontWeight: 700, color: T.text }}>Sale completed</div>
+            </div>
+            <div style={{ fontSize: 12, color: T.textMuted }}>{`Receipt #${receipt.receiptNo} \u2014 ${fmtMoney(receipt.total)} total`}</div>
+          </Card>
+
+          <div className="print-receipt">
+            <Card style={{ marginBottom: 20, maxWidth: 400 }}>
+              <div style={{ textAlign: "center", marginBottom: 14 }}>
+                <div style={{ ...fontDisplay, fontWeight: 700, fontSize: 18, color: T.text }}>STOCKLINE</div>
+                <div style={{ ...fontMono, fontSize: 11, color: T.textFaint, marginTop: 2 }}>Sales Receipt</div>
+              </div>
+              <div style={{ ...fontMono, fontSize: 11, color: T.textMuted, marginBottom: 12 }}>
+                <div>Receipt #{receipt.receiptNo}</div>
+                <div>{fmtDateTime(receipt.timestamp)}</div>
+                <div>Served by {receipt.staff}</div>
+              </div>
+              <div style={{ borderTop: `1px dashed ${T.border}`, borderBottom: `1px dashed ${T.border}`, padding: "10px 0", marginBottom: 12 }}>
+                {receipt.items.map((row, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: T.text, marginBottom: 6 }}>
+                    <span>{row.name} <span style={{ color: T.textFaint, fontSize: 11 }}>x{row.qty} {row.unit}</span></span>
+                    <span style={{ ...fontMono }}>{fmtMoney(row.qty * row.unitPrice)}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", ...fontDisplay, fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 4 }}>
+                <span>Total</span>
+                <span>{fmtMoney(receipt.total)}</span>
+              </div>
+              <div style={{ textAlign: "center", fontSize: 11, color: T.textFaint, marginTop: 14 }}>Thank you!</div>
+            </Card>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Button variant="amber" onClick={() => window.print()}><Receipt size={14} />Print receipt</Button>
+            <Button variant="in" onClick={newSale}><Plus size={14} />New sale</Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function BarcodeView({ products, onSetStatus, onLog, staffName, isAdmin, isMobile }) {
   const [code, setCode] = useState("");
   const [match, setMatch] = useState(null);
