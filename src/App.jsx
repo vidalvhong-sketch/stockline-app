@@ -699,7 +699,6 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
   const totalNetSales = (totalRetailSales + totalMarketSales) - totalStockCostValue;
 
   const stats = [
-    { label: "Stock cost (supplier rate)", value: fmtMoney(totalStockCostValue), alwaysCurrent: true },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
     { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
     { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
