@@ -538,7 +538,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }
   }, [transactions, granularity]);
 
   const activeProducts = products.filter((p) => p.status === "active");
-  const totalStockUnits = products.reduce((s, p) => s + p.stock, 0);
+  const totalStockCostValue = products.reduce((s, p) => s + p.stock * p.purchase_price, 0);
   const lowStock = activeProducts.filter((p) => p.stock > 0 && p.stock <= 10);
   const outOfStock = activeProducts.filter((p) => p.stock === 0);
 
@@ -599,7 +599,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore }
   );
 
   const stats = [
-    { label: "Total stock units", value: totalStockUnits.toLocaleString(), plain: true, alwaysCurrent: true },
+    { label: "Stock cost (supplier rate)", value: fmtMoney(totalStockCostValue), alwaysCurrent: true },
     { label: "Cost from suppliers", value: fmtMoney(totalCostFromSuppliers) },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
     { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
