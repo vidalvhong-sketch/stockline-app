@@ -593,7 +593,9 @@ export default function App() {
   async function logMovement(entry) {
     try {
       const res = await api.logTransaction(entry);
-      setTransactions((t) => [res.transaction, ...t]);
+      // Insert in timestamp order (not just prepended) so backdated entries
+      // land in the right spot instead of jumping to the top of the list.
+      setTransactions((t) => [...t, res.transaction].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
       setProducts((prev) => prev.map((p) => (p.id === res.product.id ? res.product : p)));
       showToast(entry.type === "IN" ? "Stock in logged" : "Stock out logged", entry.type === "IN" ? "in" : "out");
       return true;
@@ -1578,6 +1580,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
   const [pickerQuery, setPickerQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  const [saleTimestamp, setSaleTimestamp] = useState("");
   const scanInputRef = useRef(null);
 
   useEffect(() => { scanInputRef.current && scanInputRef.current.focus(); }, []);
@@ -1635,10 +1638,11 @@ function PosView({ products, staffName, onLog, isMobile }) {
   async function completeSale() {
     if (cart.length === 0) return;
     setSaving(true);
+    const isoTimestamp = saleTimestamp ? new Date(saleTimestamp).toISOString() : new Date().toISOString();
     const remaining = [];
     const soldLines = [];
     for (const row of cart) {
-      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice });
+      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, timestamp: isoTimestamp });
       if (ok !== false) soldLines.push(row);
       else remaining.push(row);
     }
@@ -1646,11 +1650,12 @@ function PosView({ products, staffName, onLog, isMobile }) {
     if (soldLines.length > 0) {
       setReceipt({
         receiptNo: Date.now().toString(36).toUpperCase(),
-        timestamp: new Date().toISOString(),
+        timestamp: isoTimestamp,
         staff: staffName,
         items: soldLines,
         total: soldLines.reduce((s, r) => s + r.qty * r.unitPrice, 0),
       });
+      setSaleTimestamp("");
     }
     setSaving(false);
     scanInputRef.current && scanInputRef.current.focus();
@@ -1735,7 +1740,11 @@ function PosView({ products, staffName, onLog, isMobile }) {
                     </tbody>
                   </table>
                 </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 14, paddingTop: 14, borderTop: `1px solid ${T.border}`, flexWrap: "wrap", gap: 14 }}>
+                  <div>
+                    <Label>Sale date (defaults to now)</Label>
+                    <Input type="datetime-local" value={saleTimestamp} onChange={(e) => setSaleTimestamp(e.target.value)} style={{ maxWidth: 220 }} />
+                  </div>
                   <div style={{ textAlign: "right" }}>
                     <Label>Total</Label>
                     <div style={{ ...fontDisplay, fontSize: 26, fontWeight: 700, color: T.text }}>{fmtMoney(subtotal)}</div>
