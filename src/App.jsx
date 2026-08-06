@@ -1091,7 +1091,7 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
               </div>
               <div>
                 <Label>{editingId ? "Stock" : "Starting stock"}</Label>
-                <Input type="number" step="0.01" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" />
+                <Input type="number" step="any" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" />
               </div>
             </div>
             <div style={{ marginBottom: 14, maxWidth: 260 }}>
@@ -1443,7 +1443,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
             </div>
             <div>
               <Label>Quantity{selectedProduct ? ` (${selectedProduct.unit || "pcs"})` : ""}</Label>
-              <Input required type="number" step="0.01" min="0.01" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" />
+              <Input required type="number" step="any" min="0.001" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" />
             </div>
             <div>
               <Label>{type === "DISCARD" ? "Cost value (writing off)" : "Purchase price (from supplier)"}</Label>
@@ -1621,7 +1621,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
   }
 
   function updateQty(i, qty) {
-    setCart((prev) => prev.map((r, idx) => (idx === i ? { ...r, qty: Math.max(0.01, Number(qty) || 0.01) } : r)));
+    setCart((prev) => prev.map((r, idx) => (idx === i ? { ...r, qty: Math.max(0.001, Number(qty) || 0.001) } : r)));
   }
   function updatePrice(i, price) {
     setCart((prev) => prev.map((r, idx) => (idx === i ? { ...r, unitPrice: Math.max(0, Number(price) || 0) } : r)));
@@ -1719,7 +1719,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
                         <tr key={i} style={{ borderBottom: `1px solid ${T.border}` }}>
                           <td style={{ padding: "8px 10px", fontSize: 13, color: T.text }}>{row.name}<span style={{ color: T.textFaint, fontSize: 11 }}> / {row.unit}</span></td>
                           <td style={{ padding: "8px 10px" }}>
-                            <Input type="number" step="0.01" min="0.01" value={row.qty} onChange={(e) => updateQty(i, e.target.value)} style={{ width: 70, padding: "5px 8px", fontSize: 12 }} />
+                            <Input type="number" step="any" min="0.001" value={row.qty} onChange={(e) => updateQty(i, e.target.value)} style={{ width: 70, padding: "5px 8px", fontSize: 12 }} />
                           </td>
                           <td style={{ padding: "8px 10px" }}>
                             <Input type="number" step="0.01" min="0" value={row.unitPrice} onChange={(e) => updatePrice(i, e.target.value)} style={{ width: 90, padding: "5px 8px", fontSize: 12, ...fontMono }} />
@@ -1858,7 +1858,7 @@ function BarcodeView({ products, onSetStatus, onLog, staffName, isAdmin, isMobil
   }
 
   function updateCartQty(index, qty) {
-    setCart((prev) => prev.map((r, i) => (i === index ? { ...r, qty: Math.max(0.01, Number(qty) || 0.01) } : r)));
+    setCart((prev) => prev.map((r, i) => (i === index ? { ...r, qty: Math.max(0.001, Number(qty) || 0.001) } : r)));
   }
   function updateCartAction(index, action) {
     setCart((prev) => prev.map((r, i) => (i === index ? { ...r, action } : r)));
@@ -1968,7 +1968,7 @@ function BarcodeView({ products, onSetStatus, onLog, staffName, isAdmin, isMobil
                     <tr key={i} style={{ borderBottom: `1px solid ${T.border}` }}>
                       <td style={{ padding: "8px 10px", fontSize: 13, color: T.text }}>{row.name}</td>
                       <td style={{ padding: "8px 10px" }}>
-                        <Input type="number" step="0.01" min="0.01" value={row.qty} onChange={(e) => updateCartQty(i, e.target.value)} style={{ width: 70, padding: "5px 8px", fontSize: 12 }} />
+                        <Input type="number" step="any" min="0.001" value={row.qty} onChange={(e) => updateCartQty(i, e.target.value)} style={{ width: 70, padding: "5px 8px", fontSize: 12 }} />
                       </td>
                       <td style={{ padding: "8px 10px" }}>
                         <div style={{ display: "flex", gap: 4 }}>
