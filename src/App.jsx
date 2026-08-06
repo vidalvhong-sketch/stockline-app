@@ -1574,13 +1574,14 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
    POINT OF SALE — cart checkout with printable receipt
 --------------------------------------------------------------- */
 function PosView({ products, staffName, onLog, isMobile }) {
-  const [cart, setCart] = useState([]); // {productId, name, unit, qty, unitPrice, marketPrice}
+  const [cart, setCart] = useState([]); // {productId, name, unit, qty, unitPrice, retailPrice, marketPrice, priceType}
   const [scanCode, setScanCode] = useState("");
   const [scanError, setScanError] = useState("");
   const [pickerQuery, setPickerQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [receipt, setReceipt] = useState(null);
   const [saleTimestamp, setSaleTimestamp] = useState("");
+  const [priceMode, setPriceMode] = useState("retail"); // "retail" | "market" — default price for newly scanned items
   const scanInputRef = useRef(null);
 
   useEffect(() => { scanInputRef.current && scanInputRef.current.focus(); }, []);
@@ -1593,11 +1594,22 @@ function PosView({ products, staffName, onLog, isMobile }) {
         next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
         return next;
       }
+      const useMarket = priceMode === "market" && product.market_price != null;
       return [...prev, {
-        productId: product.id, name: product.name, unit: product.unit || "pcs",
-        qty: 1, unitPrice: product.retail_price, marketPrice: product.market_price,
+        productId: product.id, name: product.name, unit: product.unit || "pcs", qty: 1,
+        unitPrice: useMarket ? product.market_price : product.retail_price,
+        retailPrice: product.retail_price, marketPrice: product.market_price,
+        priceType: useMarket ? "market" : "retail",
       }];
     });
+  }
+
+  function setRowPriceType(index, type) {
+    setCart((prev) => prev.map((r, idx) => {
+      if (idx !== index) return r;
+      const price = type === "market" ? (r.marketPrice ?? r.retailPrice) : r.retailPrice;
+      return { ...r, priceType: type, unitPrice: price };
+    }));
   }
 
   function handleScanSubmit(e) {
@@ -1677,6 +1689,19 @@ function PosView({ products, staffName, onLog, isMobile }) {
       {!receipt && (
         <>
           <Card style={{ marginBottom: 20 }}>
+            <Label>Pricing for this customer</Label>
+            <div style={{ display: "flex", gap: 8, marginTop: 6, marginBottom: 16, flexWrap: "wrap" }}>
+              <Button variant={priceMode === "retail" ? "in" : "ghost"} onClick={() => setPriceMode("retail")}>
+                Retail <span style={{ fontWeight: 400, opacity: 0.8 }}>(cafe sales)</span>
+              </Button>
+              <Button variant={priceMode === "market" ? "amber" : "ghost"} onClick={() => setPriceMode("market")}>
+                Market <span style={{ fontWeight: 400, opacity: 0.8 }}>(store buyers)</span>
+              </Button>
+            </div>
+            <div style={{ fontSize: 11, color: T.textFaint, marginBottom: 16 }}>
+              {"New items you scan or add use this price by default \u2014 you can still switch any single item, or discount it, once it's in the cart."}
+            </div>
+
             <Label>Scan barcode</Label>
             <form onSubmit={handleScanSubmit} style={{ display: "flex", gap: 10, marginTop: 6, marginBottom: 16, flexWrap: "wrap" }}>
               <Input ref={scanInputRef} value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanError(""); }} placeholder="e.g. 041982773610" style={{ ...fontMono, maxWidth: 320 }} autoFocus />
@@ -1736,6 +1761,32 @@ function PosView({ products, staffName, onLog, isMobile }) {
                           </td>
                           <td style={{ padding: "8px 10px" }}>
                             <Input type="number" step="0.01" min="0" value={row.unitPrice} onChange={(e) => updatePrice(i, e.target.value)} style={{ width: 90, padding: "5px 8px", fontSize: 12, ...fontMono }} />
+                            {row.marketPrice != null && (
+                              <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
+                                <button
+                                  onClick={() => setRowPriceType(i, "retail")}
+                                  style={{
+                                    ...fontMono, fontSize: 9, padding: "2px 6px", borderRadius: 3, cursor: "pointer",
+                                    background: row.priceType === "retail" ? T.inDim : "transparent",
+                                    color: row.priceType === "retail" ? T.inText : T.textFaint,
+                                    border: `1px solid ${row.priceType === "retail" ? T.in : T.border}`,
+                                  }}
+                                >
+                                  RETAIL
+                                </button>
+                                <button
+                                  onClick={() => setRowPriceType(i, "market")}
+                                  style={{
+                                    ...fontMono, fontSize: 9, padding: "2px 6px", borderRadius: 3, cursor: "pointer",
+                                    background: row.priceType === "market" ? T.amberDim : "transparent",
+                                    color: row.priceType === "market" ? T.amberText : T.textFaint,
+                                    border: `1px solid ${row.priceType === "market" ? T.amber : T.border}`,
+                                  }}
+                                >
+                                  MARKET
+                                </button>
+                              </div>
+                            )}
                           </td>
                           <td style={{ padding: "8px 10px", ...fontMono, fontSize: 13, color: T.text }}>{fmtMoney(row.qty * row.unitPrice)}</td>
                           <td style={{ padding: "8px 10px", textAlign: "right" }}>
