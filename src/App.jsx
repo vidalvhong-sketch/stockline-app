@@ -5,7 +5,7 @@ import {
 import {
   LayoutDashboard, Package, Truck, ArrowLeftRight, ScanBarcode, Plus, X,
   ArrowDownToLine, ArrowUpFromLine, Ban, RotateCcw, Search, AlertTriangle, CheckCircle2, LogOut,
-  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette, Download, ChevronDown, ChevronUp,
+  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette, Download, ChevronDown, ChevronUp, Bluetooth,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
@@ -310,6 +310,83 @@ function ThemeSwitcher({ themeKey, onChange, direction = "up", compact = false, 
   );
 }
 
+function ConnectDeviceModal({ onClose, btDevice, onConnect, onDisconnect }) {
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState("");
+  const btSupported = typeof navigator !== "undefined" && !!navigator.bluetooth;
+
+  async function handlePair() {
+    setError("");
+    setConnecting(true);
+    try {
+      const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+      onConnect({ name: device.name || "Unnamed device", id: device.id });
+    } catch (err) {
+      if (err.name !== "NotFoundError") setError(err.message || "Couldn't pair that device.");
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)" }} />
+      <Card style={{ position: "relative", maxWidth: 460, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Bluetooth size={16} color={T.amber} />
+            <div style={{ ...fontDisplay, fontSize: 16, fontWeight: 700, color: T.text }}>Connect a device</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: T.textFaint, cursor: "pointer", padding: 4 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <div style={{ ...fontMono, fontSize: 11, color: T.textMuted, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Barcode scanner</div>
+          <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>
+            {"Pair it in your phone or computer's own Bluetooth settings, the same way you'd pair a wireless keyboard \u2014 no button needed here. Once paired, tap into any barcode field in the app and start scanning; it works with virtually any scanner."}
+          </div>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 16 }}>
+          <div style={{ ...fontMono, fontSize: 11, color: T.textMuted, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Receipt printer</div>
+          <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>
+            {"Most Bluetooth thermal receipt printers need a small print-service app installed on Android (e.g. \u201cESCPOS Bluetooth Print Service\u201d from Google Play) \u2014 pair your printer inside that app once, and it'll show up automatically when you tap Print receipt in Point of Sale. This is an Android/browser limitation, not something a website can bypass."}
+          </div>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 16 }}>
+          <div style={{ ...fontMono, fontSize: 11, color: T.textMuted, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Advanced: pair a Bluetooth LE device directly</div>
+          {!btSupported ? (
+            <div style={{ fontSize: 13, color: T.textFaint, lineHeight: 1.6 }}>
+              {"This browser doesn't support direct Bluetooth pairing (Safari and iPhone don't support this). Use Chrome or Edge on Android or a computer, or pair through your device's own Bluetooth settings instead."}
+            </div>
+          ) : btDevice ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <Badge tone="in">Connected</Badge>
+                <span style={{ fontSize: 13, color: T.text }}>{btDevice.name}</span>
+              </div>
+              <Button variant="ghost" onClick={onDisconnect}><X size={13} />Disconnect</Button>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6, marginBottom: 10 }}>
+                {"For newer BLE-based scanners or printers, you can pair directly here. This won't work with most cheap Bluetooth Classic thermal printers \u2014 use the print-service app above for those."}
+              </div>
+              <Button variant="amber" onClick={handlePair} disabled={connecting}>
+                <Bluetooth size={14} />{connecting ? "Pairing\u2026" : "Pair Bluetooth device"}
+              </Button>
+              {error && <div style={{ color: T.out, fontSize: 12, marginTop: 8 }}>{error}</div>}
+            </>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function SectionHeader({ eyebrow, title, action }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
@@ -458,6 +535,9 @@ export default function App() {
     setThemeKey(key);
     saveTheme(key);
   }
+
+  const [showDeviceModal, setShowDeviceModal] = useState(false);
+  const [btDevice, setBtDevice] = useState(null);
 
   const [agentName, setAgentName] = useState(getToken() ? getAgentName() : null);
   const [role, setRole] = useState(getToken() ? getAgentRole() : null);
@@ -676,11 +756,24 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <Badge tone={isAdmin ? "amber" : "default"}>{agentName}</Badge>
             <ThemeSwitcher themeKey={themeKey} onChange={applyTheme} direction="down" align="right" compact />
+            <button onClick={() => setShowDeviceModal(true)} style={{ background: "transparent", border: "none", color: T.textMuted, padding: 6, cursor: "pointer", display: "flex", position: "relative" }}>
+              <Bluetooth size={16} />
+              {btDevice && <span style={{ position: "absolute", top: 4, right: 4, width: 6, height: 6, borderRadius: "50%", background: T.in }} />}
+            </button>
             <button onClick={logout} style={{ background: "transparent", border: "none", color: T.textMuted, padding: 6, cursor: "pointer", display: "flex" }}>
               <LogOut size={16} />
             </button>
           </div>
         </div>
+
+        {showDeviceModal && (
+          <ConnectDeviceModal
+            onClose={() => setShowDeviceModal(false)}
+            btDevice={btDevice}
+            onConnect={(d) => setBtDevice(d)}
+            onDisconnect={() => setBtDevice(null)}
+          />
+        )}
 
         {toastEl}
 
@@ -752,12 +845,27 @@ export default function App() {
             <div style={{ marginBottom: 6 }}>
               <ThemeSwitcher themeKey={themeKey} onChange={applyTheme} direction="up" />
             </div>
+            <div style={{ marginBottom: 6 }}>
+              <Button variant="ghost" style={{ fontSize: 12, padding: "6px 10px", width: "100%", justifyContent: "center" }} onClick={() => setShowDeviceModal(true)}>
+                <Bluetooth size={13} />Connect device
+                {btDevice && <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.in, marginLeft: 4 }} />}
+              </Button>
+            </div>
             <Button variant="ghost" style={{ fontSize: 12, padding: "6px 10px", width: "100%", justifyContent: "center" }} onClick={logout}>
               <LogOut size={13} />Sign out
             </Button>
           </div>
         </div>
       </div>
+
+      {showDeviceModal && (
+        <ConnectDeviceModal
+          onClose={() => setShowDeviceModal(false)}
+          btDevice={btDevice}
+          onConnect={(d) => setBtDevice(d)}
+          onDisconnect={() => setBtDevice(null)}
+        />
+      )}
 
       <div style={{ flex: 1, padding: 28, minWidth: 0, position: "relative" }}>
         {toastEl}
