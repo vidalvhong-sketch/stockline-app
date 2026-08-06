@@ -1702,6 +1702,14 @@ function PosView({ products, staffName, onLog, isMobile }) {
                 </div>
               )}
             </div>
+
+            <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 16 }}>
+              <Label>Sale date (defaults to now)</Label>
+              <Input type="datetime-local" value={saleTimestamp} onChange={(e) => setSaleTimestamp(e.target.value)} style={{ maxWidth: 220 }} />
+              <div style={{ fontSize: 11, color: T.textFaint, marginTop: 6 }}>
+                {"Set this before completing the sale if you're entering an order from a different day."}
+              </div>
+            </div>
           </Card>
 
           <Card style={{ marginBottom: 20 }}>
@@ -1740,11 +1748,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
                     </tbody>
                   </table>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 14, paddingTop: 14, borderTop: `1px solid ${T.border}`, flexWrap: "wrap", gap: 14 }}>
-                  <div>
-                    <Label>Sale date (defaults to now)</Label>
-                    <Input type="datetime-local" value={saleTimestamp} onChange={(e) => setSaleTimestamp(e.target.value)} style={{ maxWidth: 220 }} />
-                  </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
                   <div style={{ textAlign: "right" }}>
                     <Label>Total</Label>
                     <div style={{ ...fontDisplay, fontSize: 26, fontWeight: 700, color: T.text }}>{fmtMoney(subtotal)}</div>
