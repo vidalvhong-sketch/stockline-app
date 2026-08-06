@@ -1,5 +1,5 @@
-const CACHE_NAME = "stockline-shell-v1";
-const SHELL_URLS = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png"];
+const CACHE_NAME = "stockline-shell-v2";
+const SHELL_URLS = ["/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -24,21 +24,18 @@ self.addEventListener("fetch", (event) => {
   // stays live and authenticated. Let the browser handle them normally.
   if (url.pathname.startsWith("/api/")) return;
 
-  // Only handle same-origin GET requests for the app shell / static assets.
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
 
+  // Only the truly static icons/manifest get cached. The HTML shell and the
+  // JS bundle are deliberately left alone here (falling through to a normal,
+  // uncached network fetch) so that a new deploy is picked up on the very
+  // next page load instead of one load later \u2014 this app updates often
+  // enough that stale cached code was actually causing real bugs (users
+  // testing a feature against yesterday's build without realizing it).
+  const isStaticAsset = SHELL_URLS.includes(url.pathname);
+  if (!isStaticAsset) return;
+
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
 });
