@@ -456,6 +456,35 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
+// Temporary diagnostic: check for likely duplicate sale entries (same
+// product/qty/price/staff logged within a few seconds of each other) so we
+// can confirm or rule out a double-submission bug without guessing.
+try {
+  const rows = db.prepare(`
+    SELECT product_id, type, qty, price, staff, timestamp, id
+    FROM transactions
+    WHERE type = 'OUT'
+    ORDER BY product_id, timestamp
+  `).all();
+  const dupGroups = [];
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1], b = rows[i];
+    if (
+      a.product_id === b.product_id && a.qty === b.qty && a.price === b.price &&
+      a.staff === b.staff &&
+      Math.abs(new Date(b.timestamp) - new Date(a.timestamp)) < 5000
+    ) {
+      dupGroups.push([a, b]);
+    }
+  }
+  console.log(`[DIAG] Checked ${rows.length} OUT transactions for near-duplicates. Found ${dupGroups.length} suspicious pair(s).`);
+  for (const [a, b] of dupGroups) {
+    console.log(`[DIAG] Possible duplicate: product=${a.product_id} qty=${a.qty} price=${a.price} staff=${a.staff} | id1=${a.id} @ ${a.timestamp} | id2=${b.id} @ ${b.timestamp}`);
+  }
+} catch (e) {
+  console.log("[DIAG] duplicate check error:", e.message);
+}
+
 app.listen(PORT, () => {
   console.log(`STOCKLINE server running on port ${PORT}`);
 });
