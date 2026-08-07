@@ -934,19 +934,12 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
   }, [statsMode, statsDay, statsMonth, statsYear]);
 
   const totalRetailSales = useMemo(
-    () => periodTransactions.filter((t) => t.type === "OUT").reduce((s, t) => s + t.price * t.qty, 0),
+    () => periodTransactions.filter((t) => t.type === "OUT" && t.price_type !== "market").reduce((s, t) => s + t.price * t.qty, 0),
     [periodTransactions]
   );
   const totalMarketSales = useMemo(
-    () => periodTransactions.filter((t) => t.type === "OUT").reduce((s, t) => {
-      // Prefer the market price captured at the moment of sale; fall back to
-      // the product's current market price for older entries logged before
-      // this was tracked per-transaction.
-      if (t.market_price != null) return s + t.market_price * t.qty;
-      const p = findProduct(t);
-      return s + (p && p.market_price != null ? p.market_price * t.qty : 0);
-    }, 0),
-    [periodTransactions, products]
+    () => periodTransactions.filter((t) => t.type === "OUT" && t.price_type === "market").reduce((s, t) => s + t.price * t.qty, 0),
+    [periodTransactions]
   );
   const totalDiscarded = useMemo(
     () => periodTransactions.filter((t) => t.type === "DISCARD").reduce((s, t) => s + t.price * t.qty, 0),
@@ -958,7 +951,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
   const stats = [
     { label: "Stock cost (supplier rate)", value: fmtMoney(totalStockCostValue), alwaysCurrent: true },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
-    { label: "Market value (sales)", value: fmtMoney(totalMarketSales) },
+    { label: "Market sales", value: fmtMoney(totalMarketSales) },
     { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
     { label: "Total sales / revenue", value: fmtMoney(totalSalesRevenue) },
   ];
@@ -1680,7 +1673,14 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
               const s = suppliers.find((ss) => ss.id === (t.supplier_id || t.supplierId));
               return (
                 <tr key={t.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                  <td style={{ padding: "10px 16px" }}><Badge tone={movementTone(t.type)}>{t.type}</Badge></td>
+                  <td style={{ padding: "10px 16px" }}>
+                    <Badge tone={movementTone(t.type)}>{t.type}</Badge>
+                    {t.type === "OUT" && t.price_type && (
+                      <div style={{ fontSize: 9, color: t.price_type === "market" ? T.amber : T.textFaint, marginTop: 3, ...fontMono, letterSpacing: "0.04em" }}>
+                        {t.price_type.toUpperCase()}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p ? p.name : "Deleted product"}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{t.qty} {p ? (p.unit || "pcs") : ""}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textMuted }}>
@@ -1800,7 +1800,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
     const remaining = [];
     const soldLines = [];
     for (const row of cart) {
-      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, timestamp: isoTimestamp });
+      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, priceType: row.priceType, timestamp: isoTimestamp });
       if (ok !== false) soldLines.push(row);
       else remaining.push(row);
     }
