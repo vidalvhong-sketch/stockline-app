@@ -1678,16 +1678,18 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
         </div>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
-        <div style={{ fontSize: 12, color: T.textFaint }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10,
+        background: T.surfaceRaised, border: `1px solid ${T.amber}`, borderRadius: 6, padding: "12px 16px", marginBottom: 14,
+      }}>
+        <div style={{ fontSize: 12, color: T.textMuted }}>
           Showing {filteredTxns.length} {filteredTxns.length === 1 ? "entry" : "entries"}
           {dateFrom ? ` from ${dateFrom}` : ""}{dateTo ? ` to ${dateTo}` : ""}
         </div>
-        {filteredTxns.length > 0 && (
-          <div style={{ fontSize: 13, color: T.text }}>
-            Total: <span style={{ ...fontMono, fontWeight: 700 }}>{fmtMoney(filteredTotal)}</span>
-          </div>
-        )}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ ...fontMono, fontSize: 11, color: T.textFaint, letterSpacing: "0.06em", textTransform: "uppercase" }}>Total</span>
+          <span style={{ ...fontDisplay, fontSize: 22, fontWeight: 700, color: T.amber }}>{fmtMoney(filteredTotal)}</span>
+        </div>
       </div>
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
