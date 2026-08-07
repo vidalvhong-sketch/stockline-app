@@ -715,7 +715,7 @@ export default function App() {
 
   const mainContent = (
     <>
-      {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
+      {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} showToast={showToast} />}
       {view === "pos" && <PosView products={products} staffName={agentName} onLog={logMovement} isMobile={isMobile} />}
       {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onEdit={editProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "suppliers" && <SuppliersView suppliers={suppliers} products={products} transactions={transactions} onAdd={addSupplier} onEdit={editSupplier} onDelete={deleteSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
@@ -878,7 +878,7 @@ export default function App() {
 /* ---------------------------------------------------------------
    DASHBOARD
 --------------------------------------------------------------- */
-function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, isMobile }) {
+function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, isMobile, showToast }) {
   const [granularity, setGranularity] = useState("daily");
   const counts = { daily: 14, weekly: 10, yearly: 5 };
 
@@ -965,7 +965,11 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
 
   return (
     <div>
-      <SectionHeader eyebrow="Overview" title="Inventory dashboard" />
+      <SectionHeader eyebrow="Overview" title="Inventory dashboard" action={
+        <Button variant="ghost" onClick={() => downloadAllData(products, suppliers, transactions, showToast)}>
+          <Download size={14} />Download all data
+        </Button>
+      } />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 6 }}>
@@ -1310,33 +1314,40 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
 /* ---------------------------------------------------------------
    SUPPLIERS VIEW
 --------------------------------------------------------------- */
-function downloadAllData(products, suppliers, transactions) {
-  const wb = XLSX.utils.book_new();
+function downloadAllData(products, suppliers, transactions, showToast) {
+  try {
+    const wb = XLSX.utils.book_new();
 
-  const productRows = products.map((p) => ({
-    Barcode: p.barcode, Name: p.name, Category: p.category, Unit: p.unit,
-    "Purchase Price": p.purchase_price, "Retail Price": p.retail_price, "Market Price": p.market_price,
-    Stock: p.stock, Status: p.status,
-  }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(productRows), "Products");
+    const productRows = products.map((p) => ({
+      Barcode: p.barcode, Name: p.name, Category: p.category, Unit: p.unit,
+      "Purchase Price": p.purchase_price, "Retail Price": p.retail_price, "Market Price": p.market_price,
+      Stock: p.stock, Status: p.status,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(productRows), "Products");
 
-  const supplierRows = suppliers.map((s) => ({ Name: s.name, Contact: s.contact, Phone: s.phone }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(supplierRows), "Suppliers");
+    const supplierRows = suppliers.map((s) => ({ Name: s.name, Contact: s.contact, Phone: s.phone }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(supplierRows), "Suppliers");
 
-  const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
-  const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s]));
-  const txnRows = transactions.map((t) => {
-    const p = productMap[t.product_id || t.productId];
-    const s = supplierMap[t.supplier_id || t.supplierId];
-    return {
-      Type: t.type, Product: p ? p.name : "Deleted product", Quantity: t.qty, Unit: p ? p.unit : "",
-      Price: t.price, "Market Price": t.market_price ?? "", Supplier: s ? s.name : "",
-      Staff: t.staff, Timestamp: t.timestamp,
-    };
-  });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txnRows), "Movement Log");
+    const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+    const supplierMap = Object.fromEntries(suppliers.map((s) => [s.id, s]));
+    const txnRows = transactions.map((t) => {
+      const p = productMap[t.product_id || t.productId];
+      const s = supplierMap[t.supplier_id || t.supplierId];
+      return {
+        Type: t.type, Product: p ? p.name : "Deleted product", Quantity: t.qty, Unit: p ? p.unit : "",
+        Price: t.price, "Market Price": t.market_price ?? "", Supplier: s ? s.name : "",
+        Staff: t.staff, Timestamp: t.timestamp,
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txnRows), "Movement Log");
 
-  XLSX.writeFile(wb, `stockline-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `stockline-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    if (showToast) showToast("Export downloaded", "in");
+  } catch (err) {
+    console.error("Export failed:", err);
+    if (showToast) showToast(`Export failed: ${err.message || "unknown error"}`, "out");
+    else alert(`Export failed: ${err.message || "unknown error"}`);
+  }
 }
 
 function SuppliersView({ suppliers, products, transactions, onAdd, onEdit, onDelete, isAdmin, isMobile }) {
@@ -1386,16 +1397,11 @@ function SuppliersView({ suppliers, products, transactions, onAdd, onEdit, onDel
   return (
     <div>
       <SectionHeader eyebrow="Vendors" title="Suppliers" action={
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Button variant="ghost" onClick={() => downloadAllData(products, suppliers, transactions)}>
-            <Download size={14} />Download all data
+        isAdmin && (
+          <Button variant="amber" onClick={() => (showForm ? closeForm() : openAddForm())}>
+            {showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? "Cancel" : "Add supplier"}
           </Button>
-          {isAdmin && (
-            <Button variant="amber" onClick={() => (showForm ? closeForm() : openAddForm())}>
-              {showForm ? <X size={14} /> : <Plus size={14} />}{showForm ? "Cancel" : "Add supplier"}
-            </Button>
-          )}
-        </div>
+        )
       } />
       {isAdmin && showForm && (
         <Card style={{ marginBottom: 20 }}>
