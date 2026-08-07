@@ -5,7 +5,7 @@ import {
 import {
   LayoutDashboard, Package, Truck, ArrowLeftRight, ScanBarcode, Plus, X,
   ArrowDownToLine, ArrowUpFromLine, Ban, RotateCcw, Search, AlertTriangle, CheckCircle2, LogOut,
-  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette, Download, ChevronDown, ChevronUp, Bluetooth,
+  Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette, Download, ChevronDown, ChevronUp, Bluetooth, ArrowUpDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
@@ -615,7 +615,7 @@ export default function App() {
   async function addProduct(prod) {
     try {
       const created = await api.addProduct(prod);
-      setProducts((p) => [...p, created]);
+      setProducts((p) => [...p, created].sort((a, b) => a.name.localeCompare(b.name)));
       showToast("Product added to inventory", "in");
     } catch (err) {
       showToast(err.message, "out");
@@ -1110,6 +1110,9 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" });
   const [query, setQuery] = useState("");
+  const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc" — by product name
+  const [filterUnit, setFilterUnit] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
 
   const emptyForm = { name: "", category: "", purchasePrice: "", retailPrice: "", marketPrice: "", stock: "", barcode: "", unit: "pcs" };
 
@@ -1152,11 +1155,17 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
     }
   }
 
-  const filtered = products.filter((p) =>
-    p.name.toLowerCase().includes(query.toLowerCase()) ||
-    p.category.toLowerCase().includes(query.toLowerCase()) ||
-    p.barcode.includes(query)
-  );
+  const unitOptions = [...new Set(products.map((p) => p.unit).filter(Boolean))].sort();
+
+  const filtered = products
+    .filter((p) =>
+      p.name.toLowerCase().includes(query.toLowerCase()) ||
+      p.category.toLowerCase().includes(query.toLowerCase()) ||
+      p.barcode.includes(query)
+    )
+    .filter((p) => !filterUnit || p.unit === filterUnit)
+    .filter((p) => !filterCategory || p.category === filterCategory)
+    .sort((a, b) => sortDir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name));
 
   return (
     <div>
@@ -1224,9 +1233,27 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
         </Card>
       )}
 
-      <div style={{ marginBottom: 14, maxWidth: 320, position: "relative" }}>
-        <Search size={14} color={T.textFaint} style={{ position: "absolute", left: 10, top: 11 }} />
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, category, or barcode" style={{ paddingLeft: 30 }} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ maxWidth: 320, flex: 1, minWidth: 200, position: "relative" }}>
+          <Search size={14} color={T.textFaint} style={{ position: "absolute", left: 10, top: 11 }} />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, category, or barcode" style={{ paddingLeft: 30 }} />
+        </div>
+        <Button variant="ghost" onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}>
+          <ArrowUpDown size={13} />Name {sortDir === "asc" ? "A\u2192Z" : "Z\u2192A"}
+        </Button>
+        <Select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} style={{ width: 170 }}>
+          <option value="">All categories</option>
+          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+        </Select>
+        <Select value={filterUnit} onChange={(e) => setFilterUnit(e.target.value)} style={{ width: 140 }}>
+          <option value="">All units</option>
+          {unitOptions.map((u) => <option key={u} value={u}>{u}</option>)}
+        </Select>
+        {(filterCategory || filterUnit || query) && (
+          <Button variant="ghost" onClick={() => { setFilterCategory(""); setFilterUnit(""); setQuery(""); }}>
+            <X size={13} />Clear
+          </Button>
+        )}
       </div>
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
