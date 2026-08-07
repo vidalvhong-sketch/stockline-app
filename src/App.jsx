@@ -1574,6 +1574,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
     if (dateTo && tTime > new Date(dateTo + "T23:59:59.999").getTime()) return false;
     return true;
   });
+  const filteredTotal = filteredTxns.reduce((s, t) => s + t.price * t.qty, 0);
 
   const typeLabels = {
     IN: { verb: "Received by", action: "Log stock in", button: "in" },
@@ -1677,12 +1678,17 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
         </div>
       </div>
 
-      {(dateFrom || dateTo) && (
-        <div style={{ fontSize: 12, color: T.textFaint, marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: T.textFaint }}>
           Showing {filteredTxns.length} {filteredTxns.length === 1 ? "entry" : "entries"}
           {dateFrom ? ` from ${dateFrom}` : ""}{dateTo ? ` to ${dateTo}` : ""}
         </div>
-      )}
+        {filteredTxns.length > 0 && (
+          <div style={{ fontSize: 13, color: T.text }}>
+            Total: <span style={{ ...fontMono, fontWeight: 700 }}>{fmtMoney(filteredTotal)}</span>
+          </div>
+        )}
+      </div>
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
