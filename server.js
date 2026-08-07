@@ -154,6 +154,26 @@ if (!txnCols.includes("price_type")) {
   console.log("Migrated transactions table: added price_type column.");
 }
 
+// Backfill price_type on historical sales logged before this was tracked.
+// The old code always stored market_price as a reference on every sale
+// regardless of what was actually charged, so we can recover which price
+// was really used by comparing what was charged (price) to that reference:
+// if they match, it was a market-priced sale; otherwise treat it as retail
+// (the safer default, matching how these sales behaved before dual pricing
+// existed at all). Safe to run every boot \u2014 only touches rows still
+// missing a price_type, so it's a no-op once historical data is backfilled.
+const backfilled = db.prepare(`
+  UPDATE transactions
+  SET price_type = CASE
+    WHEN market_price IS NOT NULL AND ABS(price - market_price) < 0.01 THEN 'market'
+    ELSE 'retail'
+  END
+  WHERE type = 'OUT' AND price_type IS NULL
+`).run();
+if (backfilled.changes > 0) {
+  console.log(`Backfilled price_type for ${backfilled.changes} historical sale(s).`);
+}
+
 // One-time cleanup: the person running this app confirmed everything logged
 // before Aug 3, 2026 was test data, not real activity. Guarded by a marker
 // in `meta` so it only ever runs once, the same way schema migrations are
