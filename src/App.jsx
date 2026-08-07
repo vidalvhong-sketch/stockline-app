@@ -1697,7 +1697,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-              {["Type", "Product", "Qty", "Price", "Supplier", "Staff", "Timestamp"].map((h) => (
+              {["Type", "Product", "Qty", "Price", "Amount", "Supplier", "Staff", "Timestamp"].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 16px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
               ))}
             </tr>
@@ -1724,6 +1724,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
                       <div style={{ fontSize: 10, color: T.textFaint, marginTop: 2 }}>mkt: {fmtMoney(t.market_price)}</div>
                     )}
                   </td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text, fontWeight: 600 }}>{fmtMoney(t.price * t.qty)}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{s ? s.name : "\u2014"}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{t.staff}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textFaint }}>{fmtDateTime(t.timestamp)}</td>
