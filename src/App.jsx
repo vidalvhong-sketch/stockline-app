@@ -1235,8 +1235,13 @@ function ProductsView({ products, categories, onAdd, onEdit, onSetStatus, onDele
 
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         <div style={{ maxWidth: 320, flex: 1, minWidth: 200, position: "relative" }}>
-          <Search size={14} color={T.textFaint} style={{ position: "absolute", left: 10, top: 11 }} />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, category, or barcode" style={{ paddingLeft: 30 }} />
+          <Search size={14} color="#5A7285" style={{ position: "absolute", left: 10, top: 11 }} />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, category, or barcode"
+            style={{ paddingLeft: 30, background: "#DCEEFB", borderColor: "#A9C6E0", color: "#1B2E3D" }}
+          />
         </div>
         <Button variant="ghost" onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}>
           <ArrowUpDown size={13} />Name {sortDir === "asc" ? "A\u2192Z" : "Z\u2192A"}
