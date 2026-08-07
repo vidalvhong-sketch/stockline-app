@@ -144,10 +144,24 @@ function startOfWeek(d) {
   date.setDate(date.getDate() - day);
   return date;
 }
+// Local (not UTC) YYYY-MM-DD / YYYY-MM \u2014 toISOString() always returns UTC,
+// which silently shifts every date boundary by the browser's UTC offset
+// (8 hours for Philippine time), sorting late-night/early-morning sales
+// into the wrong day. These use the Date object's local getters instead,
+// matching what the person actually sees on their clock.
+function localDateStr(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function localMonthStr(d) {
+  return localDateStr(d).slice(0, 7);
+}
 function periodKey(iso, granularity) {
   const d = new Date(iso);
-  if (granularity === "daily") return d.toISOString().slice(0, 10);
-  if (granularity === "weekly") return startOfWeek(d).toISOString().slice(0, 10);
+  if (granularity === "daily") return localDateStr(d);
+  if (granularity === "weekly") return localDateStr(startOfWeek(d));
   return String(d.getFullYear());
 }
 function periodLabel(key, granularity) {
@@ -900,8 +914,8 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
   const findProduct = (t) => products.find((pp) => pp.id === (t.product_id || t.productId));
 
   const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  const thisMonthStr = today.toISOString().slice(0, 7);
+  const todayStr = localDateStr(today);
+  const thisMonthStr = localMonthStr(today);
   const thisYearStr = String(today.getFullYear());
 
   const [statsMode, setStatsMode] = useState("all"); // all | day | month | year
@@ -919,8 +933,8 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
     if (statsMode === "all") return transactions;
     return transactions.filter((t) => {
       const d = new Date(t.timestamp);
-      if (statsMode === "day") return d.toISOString().slice(0, 10) === statsDay;
-      if (statsMode === "month") return d.toISOString().slice(0, 7) === statsMonth;
+      if (statsMode === "day") return localDateStr(d) === statsDay;
+      if (statsMode === "month") return localMonthStr(d) === statsMonth;
       if (statsMode === "year") return String(d.getFullYear()) === statsYear;
       return true;
     });
@@ -1366,7 +1380,7 @@ function downloadAllData(products, suppliers, transactions, showToast) {
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txnRows), "Movement Log");
 
-    XLSX.writeFile(wb, `stockline-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `stockline-export-${localDateStr(new Date())}.xlsx`);
     if (showToast) showToast("Export downloaded", "in");
   } catch (err) {
     console.error("Export failed:", err);
