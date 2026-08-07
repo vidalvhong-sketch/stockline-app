@@ -463,23 +463,37 @@ try {
   const rows = db.prepare(`
     SELECT product_id, type, qty, price, staff, timestamp, id
     FROM transactions
-    WHERE type = 'OUT'
-    ORDER BY product_id, timestamp
+    WHERE type IN ('OUT', 'IN', 'DISCARD')
+    ORDER BY type, product_id, timestamp
   `).all();
   const dupGroups = [];
   for (let i = 1; i < rows.length; i++) {
     const a = rows[i - 1], b = rows[i];
     if (
-      a.product_id === b.product_id && a.qty === b.qty && a.price === b.price &&
+      a.type === b.type && a.product_id === b.product_id && a.qty === b.qty && a.price === b.price &&
       a.staff === b.staff &&
       Math.abs(new Date(b.timestamp) - new Date(a.timestamp)) < 5000
     ) {
       dupGroups.push([a, b]);
     }
   }
-  console.log(`[DIAG] Checked ${rows.length} OUT transactions for near-duplicates. Found ${dupGroups.length} suspicious pair(s).`);
+  console.log(`[DIAG] Checked ${rows.length} transactions (IN/OUT/DISCARD) for near-duplicates. Found ${dupGroups.length} suspicious pair(s).`);
   for (const [a, b] of dupGroups) {
-    console.log(`[DIAG] Possible duplicate: product=${a.product_id} qty=${a.qty} price=${a.price} staff=${a.staff} | id1=${a.id} @ ${a.timestamp} | id2=${b.id} @ ${b.timestamp}`);
+    console.log(`[DIAG] Possible duplicate: type=${a.type} product=${a.product_id} qty=${a.qty} price=${a.price} staff=${a.staff} | id1=${a.id} @ ${a.timestamp} | id2=${b.id} @ ${b.timestamp}`);
+  }
+
+  // Also check for duplicate products (same name+category, could indicate
+  // the same item was accidentally added to the catalog twice).
+  const products = db.prepare("SELECT id, name, category, barcode, stock, purchase_price, retail_price FROM products").all();
+  const byNameCat = {};
+  for (const p of products) {
+    const key = `${p.name.trim().toLowerCase()}|${p.category.trim().toLowerCase()}`;
+    (byNameCat[key] = byNameCat[key] || []).push(p);
+  }
+  const dupProducts = Object.entries(byNameCat).filter(([, list]) => list.length > 1);
+  console.log(`[DIAG] Checked ${products.length} products for duplicate name+category entries. Found ${dupProducts.length} duplicated name(s).`);
+  for (const [key, list] of dupProducts) {
+    console.log(`[DIAG] Duplicate product "${key}": ${list.map((p) => `id=${p.id} barcode=${p.barcode} stock=${p.stock}`).join("  |  ")}`);
   }
 } catch (e) {
   console.log("[DIAG] duplicate check error:", e.message);
