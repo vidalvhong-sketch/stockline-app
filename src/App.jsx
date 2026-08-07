@@ -1562,7 +1562,13 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
   }
 
   const filteredTxns = transactions.filter((t) => {
-    if (filterType !== "ALL" && t.type !== filterType) return false;
+    if (filterType === "OUT_RETAIL") {
+      if (!(t.type === "OUT" && t.price_type !== "market")) return false;
+    } else if (filterType === "OUT_MARKET") {
+      if (!(t.type === "OUT" && t.price_type === "market")) return false;
+    } else if (filterType !== "ALL" && t.type !== filterType) {
+      return false;
+    }
     const tTime = new Date(t.timestamp).getTime();
     if (dateFrom && tTime < new Date(dateFrom + "T00:00:00").getTime()) return false;
     if (dateTo && tTime > new Date(dateTo + "T23:59:59.999").getTime()) return false;
@@ -1634,15 +1640,22 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
         <div>
           <Label>History</Label>
-          <div style={{ display: "flex", gap: 6 }}>
-            {["ALL", "IN", "OUT", "DISCARD"].map((f) => (
-              <button key={f} onClick={() => setFilterType(f)} style={{
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[
+              { key: "ALL", label: "ALL" },
+              { key: "IN", label: "IN" },
+              { key: "OUT", label: "OUT" },
+              { key: "OUT_RETAIL", label: "OUT \u00b7 RETAIL" },
+              { key: "OUT_MARKET", label: "OUT \u00b7 MARKET" },
+              { key: "DISCARD", label: "DISCARD" },
+            ].map(({ key, label }) => (
+              <button key={key} onClick={() => setFilterType(key)} style={{
                 ...fontMono, fontSize: 11, padding: "5px 10px", borderRadius: 3, cursor: "pointer",
-                background: filterType === f ? T.surfaceRaised : "transparent",
-                color: filterType === f ? T.text : T.textFaint,
-                border: `1px solid ${filterType === f ? T.borderStrong : T.border}`,
+                background: filterType === key ? T.surfaceRaised : "transparent",
+                color: filterType === key ? T.text : T.textFaint,
+                border: `1px solid ${filterType === key ? T.borderStrong : T.border}`,
               }}>
-                {f}
+                {label}
               </button>
             ))}
           </div>
@@ -1828,6 +1841,10 @@ function PosView({ products, staffName, onLog, isMobile }) {
         total: soldLines.reduce((s, r) => s + r.qty * r.unitPrice, 0),
       });
       setSaleTimestamp("");
+      // Reset back to Retail for the next customer \u2014 Market pricing should
+      // be a deliberate choice per sale, not something that silently stays
+      // switched on after whoever used it last.
+      setPriceMode("retail");
     }
     setSaving(false);
     scanInputRef.current && scanInputRef.current.focus();
@@ -1835,6 +1852,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
 
   function newSale() {
     setReceipt(null);
+    setPriceMode("retail");
     scanInputRef.current && scanInputRef.current.focus();
   }
 
