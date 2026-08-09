@@ -180,6 +180,31 @@ if (backfilled.changes > 0) {
 // guarded above \u2014 safe to redeploy repeatedly without re-triggering it, and
 // doesn't block legitimately backdated entries logged after this point.
 db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+
+// Void log: an audit trail of every edit and delete across the app, so
+// changes and deletions can always be traced back to who did what and when
+// \u2014 and, for deletes, what the record actually contained before it was
+// removed.
+db.exec(`
+CREATE TABLE IF NOT EXISTS void_log (
+  id TEXT PRIMARY KEY,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT,
+  summary TEXT NOT NULL,
+  before_data TEXT,
+  staff TEXT NOT NULL,
+  timestamp TEXT NOT NULL
+)`);
+
+function logVoid(action, entityType, entityId, summary, beforeData, staff) {
+  try {
+    db.prepare("INSERT INTO void_log (id, action, entity_type, entity_id, summary, before_data, staff, timestamp) VALUES (?,?,?,?,?,?,?,?)")
+      .run(genId("void"), action, entityType, entityId || null, summary, beforeData ? JSON.stringify(beforeData) : null, staff || "Unknown", new Date().toISOString());
+  } catch (e) {
+    console.log("[VOID LOG ERROR]", e.message);
+  }
+}
 const PURGE_MARKER = "purge_test_data_before_2026-08-03";
 const alreadyPurged = db.prepare("SELECT value FROM meta WHERE key = ?").get(PURGE_MARKER);
 if (!alreadyPurged) {
@@ -340,6 +365,7 @@ app.patch("/api/suppliers/:id", requireAuth, requireAdmin, (req, res) => {
   const { name, contact, phone } = req.body || {};
   if (!name) return res.status(400).json({ error: "Supplier name is required" });
   db.prepare("UPDATE suppliers SET name = ?, contact = ?, phone = ? WHERE id = ?").run(name, contact || "", phone || "", supplier.id);
+  logVoid("edit", "supplier", supplier.id, `Edited supplier "${supplier.name}"`, supplier, req.agent.name);
   res.json(db.prepare("SELECT * FROM suppliers WHERE id = ?").get(supplier.id));
 });
 
@@ -347,6 +373,7 @@ app.delete("/api/suppliers/:id", requireAuth, requireAdmin, (req, res) => {
   const supplier = db.prepare("SELECT * FROM suppliers WHERE id = ?").get(req.params.id);
   if (!supplier) return res.status(404).json({ error: "Supplier not found" });
   db.prepare("DELETE FROM suppliers WHERE id = ?").run(supplier.id);
+  logVoid("delete", "supplier", supplier.id, `Deleted supplier "${supplier.name}"`, supplier, req.agent.name);
   res.json({ ok: true, id: supplier.id });
 });
 
@@ -396,6 +423,7 @@ app.patch("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: "That barcode is already in use" });
   }
+  logVoid("edit", "product", product.id, `Edited product "${product.name}"`, product, req.agent.name);
   res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(product.id));
 });
 
@@ -403,6 +431,7 @@ app.delete("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
   if (!product) return res.status(404).json({ error: "Product not found" });
   db.prepare("DELETE FROM products WHERE id = ?").run(product.id);
+  logVoid("delete", "product", product.id, `Deleted product "${product.name}"`, product, req.agent.name);
   res.json({ ok: true, id: product.id });
 });
 
@@ -441,13 +470,46 @@ app.post("/api/transactions", requireAuth, (req, res) => {
   });
 });
 
+app.delete("/api/transactions/:id", requireAuth, requireAdmin, (req, res) => {
+  const txn = db.prepare("SELECT * FROM transactions WHERE id = ?").get(req.params.id);
+  if (!txn) return res.status(404).json({ error: "Transaction not found" });
+  const product = db.prepare("SELECT name FROM products WHERE id = ?").get(txn.product_id);
+  db.prepare("DELETE FROM transactions WHERE id = ?").run(txn.id);
+  logVoid("delete", "transaction", txn.id, `Deleted ${txn.type} entry for "${product ? product.name : txn.product_id}" (qty ${txn.qty})`, txn, req.agent.name);
+  res.json({ ok: true, id: txn.id });
+});
+
 app.delete("/api/transactions", requireAuth, requireAdmin, (req, res) => {
-  const { before } = req.query;
-  if (!before) return res.status(400).json({ error: "A cutoff date is required" });
-  const cutoff = new Date(before);
-  if (isNaN(cutoff.getTime())) return res.status(400).json({ error: "Invalid date" });
-  const result = db.prepare("DELETE FROM transactions WHERE timestamp < ?").run(cutoff.toISOString());
+  const { before, after, all } = req.query;
+  let where = "1=1";
+  const params = [];
+  if (all === "true") {
+    // no date filter \u2014 delete everything
+  } else {
+    if (before) {
+      const cutoff = new Date(before);
+      if (isNaN(cutoff.getTime())) return res.status(400).json({ error: "Invalid 'before' date" });
+      where += " AND timestamp < ?";
+      params.push(cutoff.toISOString());
+    }
+    if (after) {
+      const start = new Date(after);
+      if (isNaN(start.getTime())) return res.status(400).json({ error: "Invalid 'after' date" });
+      where += " AND timestamp >= ?";
+      params.push(start.toISOString());
+    }
+    if (!before && !after) return res.status(400).json({ error: "Provide a date range, or set all=true" });
+  }
+  const result = db.prepare(`DELETE FROM transactions WHERE ${where}`).run(...params);
+  const scopeDesc = all === "true" ? "ALL movement history" : `movement history ${after ? `from ${after} ` : ""}${before ? `before ${before}` : ""}`.trim();
+  logVoid("bulk_delete", "transaction", null, `Purged ${result.changes} entries \u2014 ${scopeDesc}`, null, req.agent.name);
   res.json({ ok: true, deleted: result.changes });
+});
+
+/* ---------------- Void log (audit trail of edits and deletes) ---------------- */
+app.get("/api/void-log", requireAuth, requireAdmin, (req, res) => {
+  const logs = db.prepare("SELECT * FROM void_log ORDER BY timestamp DESC LIMIT 500").all();
+  res.json(logs);
 });
 
 /* ---------------- Static frontend ---------------- */

@@ -427,10 +427,60 @@ function BarcodeDivider() {
 
 /* Admin-only control to permanently purge movement history before a chosen
    date. Shared between the Dashboard and Movement log views. */
-function DangerZoneCard({ onPurgeBefore }) {
-  const [purgeDate, setPurgeDate] = useState("");
-  const [purgeConfirmText, setPurgeConfirmText] = useState("");
-  const [purging, setPurging] = useState(false);
+function DangerZoneCard({ transactions, onDeleteRange }) {
+  const [mode, setMode] = useState("date"); // "date" | "month" | "all"
+  const [dateVal, setDateVal] = useState("");
+  const [monthVal, setMonthVal] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function rangeFor(m, dv, mv) {
+    if (m === "all") return { after: null, before: null, all: true };
+    if (m === "date" && dv) {
+      const next = new Date(dv + "T00:00:00");
+      next.setDate(next.getDate() + 1);
+      return { after: dv, before: localDateStr(next), all: false };
+    }
+    if (m === "month" && mv) {
+      const [y, mo] = mv.split("-").map(Number);
+      const next = new Date(y, mo, 1); // mo is 1-indexed here, so this lands on the 1st of next month
+      return { after: `${mv}-01`, before: localDateStr(next), all: false };
+    }
+    return null;
+  }
+
+  const range = rangeFor(mode, dateVal, monthVal);
+  const ready = mode === "all" || !!range;
+
+  // Live preview computed from data already loaded client-side \u2014 shows
+  // exactly how many entries are about to be deleted BEFORE the person
+  // confirms, so the scope of a bulk delete is never a surprise.
+  const previewCount = !ready ? 0 : transactions.filter((t) => {
+    if (mode === "all") return true;
+    const time = new Date(t.timestamp).getTime();
+    const afterOk = !range.after || time >= new Date(range.after + "T00:00:00").getTime();
+    const beforeOk = !range.before || time < new Date(range.before + "T00:00:00").getTime();
+    return afterOk && beforeOk;
+  }).length;
+
+  function describeScope() {
+    if (mode === "all") return "your ENTIRE movement history";
+    if (mode === "date") return `everything logged on ${dateVal}`;
+    if (mode === "month") return `everything logged in ${monthVal}`;
+    return "";
+  }
+
+  function reset() {
+    setDateVal(""); setMonthVal(""); setConfirmText("");
+  }
+
+  async function handleDelete() {
+    setBusy(true);
+    const params = mode === "all" ? { all: "true" } : { after: range.after, before: range.before };
+    const ok = await onDeleteRange(params);
+    setBusy(false);
+    if (ok) reset();
+  }
 
   return (
     <Card style={{ borderColor: T.outDim }}>
@@ -439,40 +489,66 @@ function DangerZoneCard({ onPurgeBefore }) {
         <div style={{ ...fontDisplay, fontSize: 14, fontWeight: 700, color: T.out }}>Danger zone</div>
       </div>
       <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
-        {"Permanently deletes movement history before a chosen date \u2014 useful for clearing out old test data or resetting the dashboard graph and totals to start fresh from a specific point. This does not change current stock levels, only the historical log and the dashboard's totals/chart."}
+        {"Permanently deletes movement history \u2014 useful for clearing out old test data. This does not change current stock levels, only the historical log and the dashboard's totals/chart. Every delete here is recorded in the Void log."}
       </div>
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: purgeDate ? 14 : 0 }}>
-        <div>
-          <Label>Delete all movement before</Label>
-          <Input type="date" value={purgeDate} onChange={(e) => { setPurgeDate(e.target.value); setPurgeConfirmText(""); }} style={{ width: 160 }} />
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {[
+          { key: "date", label: "By date" },
+          { key: "month", label: "By month" },
+          { key: "all", label: "Everything" },
+        ].map((m) => (
+          <button
+            key={m.key}
+            onClick={() => { setMode(m.key); reset(); }}
+            style={{
+              ...fontMono, fontSize: 11, padding: "6px 12px", borderRadius: 3, cursor: "pointer",
+              background: mode === m.key ? T.outDim : "transparent",
+              color: mode === m.key ? T.out : T.textFaint,
+              border: `1px solid ${mode === m.key ? T.out : T.border}`,
+            }}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {mode === "date" && (
+        <div style={{ marginBottom: 14 }}>
+          <Label>Date to delete</Label>
+          <Input type="date" value={dateVal} onChange={(e) => { setDateVal(e.target.value); setConfirmText(""); }} style={{ width: 160 }} />
         </div>
-      </div>
-      {purgeDate && (
+      )}
+      {mode === "month" && (
+        <div style={{ marginBottom: 14 }}>
+          <Label>Month to delete</Label>
+          <Input type="month" value={monthVal} onChange={(e) => { setMonthVal(e.target.value); setConfirmText(""); }} style={{ width: 160 }} />
+        </div>
+      )}
+
+      {ready && (
         <div style={{ background: T.surfaceInput, border: `1px solid ${T.outDim}`, borderRadius: 4, padding: 14 }}>
-          <div style={{ fontSize: 12, color: T.text, marginBottom: 10 }}>
-            This will permanently delete every movement entry logged before <b>{purgeDate}</b>. This can't be undone.
-            Type <b style={{ ...fontMono }}>DELETE</b> to confirm.
+          <div style={{ fontSize: 13, color: T.text, marginBottom: 4 }}>
+            This will permanently delete <b style={{ color: T.out }}>{previewCount} {previewCount === 1 ? "entry" : "entries"}</b> {"\u2014"} {describeScope()}.
+          </div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 10 }}>
+            This can't be undone. Type <b style={{ ...fontMono }}>DELETE</b> to confirm.
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <Input
-              value={purgeConfirmText}
-              onChange={(e) => setPurgeConfirmText(e.target.value)}
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
               placeholder="Type DELETE"
               style={{ maxWidth: 160, ...fontMono }}
             />
             <Button
               variant="out"
-              disabled={purgeConfirmText !== "DELETE" || purging}
-              onClick={async () => {
-                setPurging(true);
-                const ok = await onPurgeBefore(purgeDate);
-                setPurging(false);
-                if (ok) { setPurgeDate(""); setPurgeConfirmText(""); }
-              }}
+              disabled={confirmText !== "DELETE" || busy || previewCount === 0}
+              onClick={handleDelete}
             >
-              <Trash2 size={13} />{purging ? "Deleting\u2026" : "Permanently delete"}
+              <Trash2 size={13} />{busy ? "Deleting\u2026" : `Permanently delete ${previewCount > 0 ? previewCount : ""}`}
             </Button>
-            <Button variant="ghost" onClick={() => { setPurgeDate(""); setPurgeConfirmText(""); }}>Cancel</Button>
+            <Button variant="ghost" onClick={reset}>Cancel</Button>
           </div>
         </div>
       )}
@@ -669,14 +745,26 @@ export default function App() {
     }
   }
 
-  async function purgeTransactionsBefore(dateStr) {
+  async function deleteTransactionsRange(params) {
     try {
-      const res = await api.purgeTransactionsBefore(dateStr);
+      const res = await api.deleteTransactionsRange(params);
       const state = await api.getState();
       setTransactions(state.transactions);
       setProducts(state.products);
       setSuppliers(state.suppliers);
-      showToast(`Deleted ${res.deleted} movement ${res.deleted === 1 ? "entry" : "entries"} before ${dateStr}`, "out");
+      showToast(`Deleted ${res.deleted} movement ${res.deleted === 1 ? "entry" : "entries"}`, "out");
+      return true;
+    } catch (err) {
+      showToast(err.message, "out");
+      return false;
+    }
+  }
+
+  async function deleteTransaction(id) {
+    try {
+      await api.deleteTransaction(id);
+      setTransactions((prev) => prev.filter((t) => t.id !== id));
+      showToast("Entry deleted", "out");
       return true;
     } catch (err) {
       showToast(err.message, "out");
@@ -709,6 +797,7 @@ export default function App() {
     { key: "movement", label: "Movement log", icon: ArrowLeftRight },
     { key: "barcode", label: "Barcode control", icon: ScanBarcode },
     ...(isAdmin ? [{ key: "agents", label: "Agents", icon: Users }] : []),
+    ...(isAdmin ? [{ key: "voidlog", label: "Void log", icon: ShieldCheck }] : []),
   ];
 
   const isMobile = useIsMobile();
@@ -729,13 +818,14 @@ export default function App() {
 
   const mainContent = (
     <>
-      {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} showToast={showToast} />}
+      {view === "dashboard" && <Dashboard products={products} transactions={transactions} suppliers={suppliers} isAdmin={isAdmin} onDeleteRange={deleteTransactionsRange} isMobile={isMobile} showToast={showToast} />}
       {view === "pos" && <PosView products={products} staffName={agentName} onLog={logMovement} isMobile={isMobile} />}
       {view === "products" && <ProductsView products={products} categories={categories} onAdd={addProduct} onEdit={editProduct} onSetStatus={setProductStatus} onDelete={deleteProduct} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "suppliers" && <SuppliersView suppliers={suppliers} products={products} transactions={transactions} onAdd={addSupplier} onEdit={editSupplier} onDelete={deleteSupplier} isAdmin={isAdmin} isMobile={isMobile} />}
-      {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onPurgeBefore={purgeTransactionsBefore} isMobile={isMobile} />}
+      {view === "movement" && <MovementView products={products} suppliers={suppliers} transactions={transactions} onLog={logMovement} defaultStaff={agentName} isAdmin={isAdmin} onDeleteRange={deleteTransactionsRange} onDeleteOne={deleteTransaction} isMobile={isMobile} />}
       {view === "barcode" && <BarcodeView products={products} onSetStatus={setProductStatus} onLog={logMovement} staffName={agentName} isAdmin={isAdmin} isMobile={isMobile} />}
       {view === "agents" && isAdmin && <AgentsView currentAgentName={agentName} showToast={showToast} isMobile={isMobile} />}
+      {view === "voidlog" && isAdmin && <VoidLogView products={products} showToast={showToast} isMobile={isMobile} />}
     </>
   );
 
@@ -892,7 +982,7 @@ export default function App() {
 /* ---------------------------------------------------------------
    DASHBOARD
 --------------------------------------------------------------- */
-function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, isMobile, showToast }) {
+function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, isMobile, showToast }) {
   const [granularity, setGranularity] = useState("daily");
   const counts = { daily: 14, weekly: 10, yearly: 5 };
 
@@ -1102,7 +1192,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onPurgeBefore, 
       {isAdmin && (
         <>
           <BarcodeDivider />
-          <DangerZoneCard onPurgeBefore={onPurgeBefore} />
+          <DangerZoneCard transactions={transactions} onDeleteRange={onDeleteRange} />
         </>
       )}
     </div>
@@ -1532,7 +1622,7 @@ function SuppliersView({ suppliers, products, transactions, onAdd, onEdit, onDel
 /* ---------------------------------------------------------------
    MOVEMENT VIEW
 --------------------------------------------------------------- */
-function MovementView({ products, suppliers, transactions, onLog, defaultStaff, isAdmin, onPurgeBefore, isMobile }) {
+function MovementView({ products, suppliers, transactions, onLog, defaultStaff, isAdmin, onDeleteRange, onDeleteOne, isMobile }) {
   const [type, setType] = useState("IN");
   const [productId, setProductId] = useState("");
   const [qty, setQty] = useState("");
@@ -1697,7 +1787,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-              {["Type", "Product", "Qty", "Price", "Amount", "Supplier", "Staff", "Timestamp"].map((h) => (
+              {["Type", "Product", "Qty", "Price", "Amount", "Supplier", "Staff", "Timestamp", ""].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 16px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
               ))}
             </tr>
@@ -1728,11 +1818,28 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{s ? s.name : "\u2014"}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{t.staff}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textFaint }}>{fmtDateTime(t.timestamp)}</td>
+                  <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                    {isAdmin && (
+                      <button
+                        onClick={() => {
+                          const p = products.find((pp) => pp.id === t.product_id);
+                          const label = `${t.type} ${t.qty} ${p ? p.unit || "pcs" : ""} of "${p ? p.name : "this product"}" on ${fmtDateTime(t.timestamp)}`;
+                          if (window.confirm(`Delete this entry?\n\n${label}\n\nThis can't be undone and is recorded in the Void log.`)) {
+                            onDeleteOne(t.id);
+                          }
+                        }}
+                        style={{ background: "transparent", border: "none", color: T.textFaint, cursor: "pointer", padding: 4, display: "flex" }}
+                        title="Delete this entry"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {filteredTxns.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No movement recorded.</td></tr>
+              <tr><td colSpan={9} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No movement recorded.</td></tr>
             )}
           </tbody>
         </table>
@@ -1742,7 +1849,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
       {isAdmin && (
         <>
           <BarcodeDivider />
-          <DangerZoneCard onPurgeBefore={onPurgeBefore} />
+          <DangerZoneCard transactions={transactions} onDeleteRange={onDeleteRange} />
         </>
       )}
     </div>
@@ -2379,6 +2486,98 @@ function BarcodeView({ products, onSetStatus, onLog, staffName, isAdmin, isMobil
 /* ---------------------------------------------------------------
    AGENTS VIEW (admin only) — add/remove agents, reset PINs
 --------------------------------------------------------------- */
+function VoidLogView({ products, showToast, isMobile }) {
+  const [logs, setLogs] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    api.getVoidLog()
+      .then(setLogs)
+      .catch((err) => showToast(err.message, "out"));
+  }, []);
+
+  const actionMeta = {
+    edit: { label: "EDITED", tone: "amber" },
+    delete: { label: "DELETED", tone: "out" },
+    bulk_delete: { label: "BULK DELETE", tone: "out" },
+  };
+  const entityLabel = { product: "Product", supplier: "Supplier", transaction: "Movement entry" };
+
+  return (
+    <div>
+      <SectionHeader eyebrow="Audit trail" title="Void log" />
+      <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 16, lineHeight: 1.6 }}>
+        {"Every edit and delete across the app \u2014 products, suppliers, and movement entries \u2014 is recorded here automatically, including what the record looked like right before it was changed or removed. This can't be turned off and nothing here can be edited."}
+      </div>
+
+      {logs === null && <div style={{ color: T.textFaint, fontSize: 13 }}>Loading\u2026</div>}
+      {logs && logs.length === 0 && <div style={{ color: T.textFaint, fontSize: 13 }}>No edits or deletes recorded yet.</div>}
+
+      {logs && logs.length > 0 && (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                  {["Action", "Type", "Summary", "Staff", "When", ""].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: "10px 16px", ...fontMono, fontSize: 11, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((v) => {
+                  const meta = actionMeta[v.action] || { label: v.action.toUpperCase(), tone: "default" };
+                  const expanded = expandedId === v.id;
+                  let before = null;
+                  try { before = v.before_data ? JSON.parse(v.before_data) : null; } catch {}
+                  return (
+                    <React.Fragment key={v.id}>
+                      <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                        <td style={{ padding: "10px 16px" }}><Badge tone={meta.tone}>{meta.label}</Badge></td>
+                        <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{entityLabel[v.entity_type] || v.entity_type}</td>
+                        <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{v.summary}</td>
+                        <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{v.staff}</td>
+                        <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textFaint }}>{fmtDateTime(v.timestamp)}</td>
+                        <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                          {before && (
+                            <button
+                              onClick={() => setExpandedId(expanded ? null : v.id)}
+                              style={{ background: "transparent", border: "none", color: T.textFaint, cursor: "pointer", padding: 4, display: "flex", marginLeft: "auto" }}
+                            >
+                              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {expanded && before && (
+                        <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                          <td colSpan={6} style={{ padding: "12px 16px", background: T.surfaceInput }}>
+                            <div style={{ ...fontMono, fontSize: 11, color: T.textFaint, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                              Record before this change
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 20px" }}>
+                              {Object.entries(before).map(([k, val]) => (
+                                <div key={k} style={{ fontSize: 12 }}>
+                                  <span style={{ color: T.textFaint }}>{k}: </span>
+                                  <span style={{ ...fontMono, color: T.text }}>{val === null ? "\u2014" : String(val)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function AgentsView({ currentAgentName, showToast, isMobile }) {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2460,7 +2659,7 @@ function AgentsView({ currentAgentName, showToast, isMobile }) {
               </div>
               <div>
                 <Label>PIN (min. 4 digits)</Label>
-                <Input required type="password" inputMode="numeric" value={form.pin} onChange={(e) => setForm({ ...form, pin: e.target.value })} placeholder="\u2022\u2022\u2022\u2022" />
+                <Input required type="password" inputMode="numeric" value={form.pin} onChange={(e) => setForm({ ...form, pin: e.target.value })} placeholder={"\u2022\u2022\u2022\u2022"} />
               </div>
               <div>
                 <Label>Role</Label>
