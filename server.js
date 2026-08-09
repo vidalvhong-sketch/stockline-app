@@ -551,6 +551,15 @@ try {
     console.log(`[BOOT RECOVERY SCAN] ${f.id} :: ${f.fragments.join(" | ")}`);
   }
   console.log("[BOOT RECOVERY SCAN] done\n");
+
+  // Also dump product id -> name so recovered transaction fragments (which
+  // only contain product IDs) can be matched back to real product names.
+  const products = db.prepare("SELECT id, name FROM products").all();
+  console.log(`[PRODUCT MAP] ${products.length} products`);
+  for (const p of products) {
+    console.log(`[PRODUCT MAP] ${p.id} => ${p.name}`);
+  }
+  console.log("[PRODUCT MAP] done");
 } catch (e) {
   console.log("[BOOT RECOVERY SCAN ERROR]", e.message);
 }
