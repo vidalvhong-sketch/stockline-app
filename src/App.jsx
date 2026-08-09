@@ -1480,7 +1480,7 @@ function downloadAllData(products, suppliers, transactions, showToast) {
       const s = supplierMap[t.supplier_id || t.supplierId];
       return {
         Type: t.type, Product: p ? p.name : "Deleted product", Quantity: t.qty, Unit: p ? p.unit : "",
-        Price: t.price, "Market Price": t.market_price ?? "", Supplier: s ? s.name : "",
+        Price: t.price, "Market Price": t.market_price ?? "", Customer: t.customer_name || "", Supplier: s ? s.name : "",
         Staff: t.staff, Timestamp: t.timestamp,
       };
     });
@@ -1649,6 +1649,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
   const [filterType, setFilterType] = useState("ALL");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [customerFilter, setCustomerFilter] = useState("");
 
   const selectedProduct = products.find((p) => p.id === productId);
 
@@ -1667,6 +1668,8 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
     if (ok !== false) { setQty(""); setSupplierId(""); setTimestamp(""); }
   }
 
+  const customerNames = [...new Set(transactions.filter((t) => t.customer_name).map((t) => t.customer_name))].sort();
+
   const filteredTxns = transactions.filter((t) => {
     if (filterType === "OUT_RETAIL") {
       if (!(t.type === "OUT" && t.price_type !== "market")) return false;
@@ -1675,6 +1678,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
     } else if (filterType !== "ALL" && t.type !== filterType) {
       return false;
     }
+    if (customerFilter && t.customer_name !== customerFilter) return false;
     const tTime = new Date(t.timestamp).getTime();
     if (dateFrom && tTime < new Date(dateFrom + "T00:00:00").getTime()) return false;
     if (dateTo && tTime > new Date(dateTo + "T23:59:59.999").getTime()) return false;
@@ -1768,6 +1772,15 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          {customerNames.length > 0 && (
+            <div>
+              <Label>Customer</Label>
+              <Select value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)} style={{ width: 170 }}>
+                <option value="">All customers</option>
+                {customerNames.map((c) => <option key={c} value={c}>{c}</option>)}
+              </Select>
+            </div>
+          )}
           <div>
             <Label>From</Label>
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ width: 150 }} />
@@ -1776,8 +1789,8 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
             <Label>To</Label>
             <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ width: 150 }} />
           </div>
-          {(dateFrom || dateTo) && (
-            <Button variant="ghost" style={{ padding: "9px 12px", fontSize: 12 }} onClick={() => { setDateFrom(""); setDateTo(""); }}>
+          {(dateFrom || dateTo || customerFilter) && (
+            <Button variant="ghost" style={{ padding: "9px 12px", fontSize: 12 }} onClick={() => { setDateFrom(""); setDateTo(""); setCustomerFilter(""); }}>
               <X size={12} />Clear
             </Button>
           )}
@@ -1803,7 +1816,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-              {["Type", "Product", "Qty", "Price", "Amount", "Supplier", "Staff", "Timestamp", ""].map((h) => (
+              {["Type", "Product", "Qty", "Price", "Amount", "Customer", "Supplier", "Staff", "Timestamp", ""].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 16px", ...fontMono, fontSize: 10, letterSpacing: "0.06em", color: T.textFaint, textTransform: "uppercase" }}>{h}</th>
               ))}
             </tr>
@@ -1831,6 +1844,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
                     )}
                   </td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text, fontWeight: 600 }}>{fmtMoney(t.price * t.qty)}</td>
+                  <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{t.customer_name || "\u2014"}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{s ? s.name : "\u2014"}</td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{t.staff}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textFaint }}>{fmtDateTime(t.timestamp)}</td>
@@ -1855,7 +1869,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
               );
             })}
             {filteredTxns.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No movement recorded.</td></tr>
+              <tr><td colSpan={10} style={{ padding: 20, textAlign: "center", color: T.textFaint, fontSize: 13 }}>No movement recorded.</td></tr>
             )}
           </tbody>
         </table>
@@ -1886,6 +1900,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
   const [saving, setSaving] = useState(false);
   const [receipt, setReceipt] = useState(null);
   const [saleTimestamp, setSaleTimestamp] = useState("");
+  const [customerName, setCustomerName] = useState("");
   const [priceMode, setPriceMode] = useState("retail"); // "retail" | "market" — default price for newly scanned items
   const scanInputRef = useRef(null);
 
@@ -1959,7 +1974,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
     const remaining = [];
     const soldLines = [];
     for (const row of cart) {
-      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, priceType: row.priceType, timestamp: isoTimestamp });
+      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, priceType: row.priceType, customerName: customerName.trim(), timestamp: isoTimestamp });
       if (ok !== false) soldLines.push(row);
       else remaining.push(row);
     }
@@ -1969,10 +1984,12 @@ function PosView({ products, staffName, onLog, isMobile }) {
         receiptNo: Date.now().toString(36).toUpperCase(),
         timestamp: isoTimestamp,
         staff: staffName,
+        customerName: customerName.trim(),
         items: soldLines,
         total: soldLines.reduce((s, r) => s + r.qty * r.unitPrice, 0),
       });
       setSaleTimestamp("");
+      setCustomerName("");
       // Reset back to Retail for the next customer \u2014 Market pricing should
       // be a deliberate choice per sale, not something that silently stays
       // switched on after whoever used it last.
@@ -2036,6 +2053,14 @@ function PosView({ products, staffName, onLog, isMobile }) {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 16 }}>
+              <Label>Customer name (optional)</Label>
+              <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="e.g. Vicky Bisquera" style={{ maxWidth: 260 }} />
+              <div style={{ fontSize: 11, color: T.textFaint, marginTop: 6 }}>
+                {"Lets you filter the Movement log by customer later, to see who buys most often."}
+              </div>
             </div>
 
             <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 16 }}>
@@ -2149,6 +2174,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
                 <div>Receipt #{receipt.receiptNo}</div>
                 <div>{fmtDateTime(receipt.timestamp)}</div>
                 <div>Served by {receipt.staff}</div>
+                {receipt.customerName && <div>Customer: {receipt.customerName}</div>}
               </div>
               <div style={{ borderTop: `1px dashed ${T.border}`, borderBottom: `1px dashed ${T.border}`, padding: "10px 0", marginBottom: 12 }}>
                 {receipt.items.map((row, i) => (

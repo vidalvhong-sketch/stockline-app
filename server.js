@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   price REAL NOT NULL DEFAULT 0,
   market_price REAL,
   price_type TEXT,
+  customer_name TEXT,
   timestamp TEXT NOT NULL
 );
 `);
@@ -152,6 +153,14 @@ if (!txnCols.includes("market_price")) {
 if (!txnCols.includes("price_type")) {
   db.exec("ALTER TABLE transactions ADD COLUMN price_type TEXT");
   console.log("Migrated transactions table: added price_type column.");
+}
+
+// Migration: add customer_name so sales can be tied to a specific customer,
+// letting the movement log be filtered to see one customer's full purchase
+// history and how often they buy.
+if (!txnCols.includes("customer_name")) {
+  db.exec("ALTER TABLE transactions ADD COLUMN customer_name TEXT");
+  console.log("Migrated transactions table: added customer_name column.");
 }
 
 // Backfill price_type on historical sales logged before this was tracked.
@@ -437,7 +446,7 @@ app.delete("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
 
 /* ---------------- Transactions (product in / out / discard) ---------------- */
 app.post("/api/transactions", requireAuth, (req, res) => {
-  const { productId, type, qty, staff, supplierId, price, marketPrice, priceType, timestamp } = req.body || {};
+  const { productId, type, qty, staff, supplierId, price, marketPrice, priceType, customerName, timestamp } = req.body || {};
   if (!productId || !type || !qty || !staff) return res.status(400).json({ error: "Product, quantity, and staff name are required" });
   if (!["IN", "OUT", "DISCARD"].includes(type)) return res.status(400).json({ error: "Invalid movement type" });
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(productId);
@@ -460,8 +469,9 @@ app.post("/api/transactions", requireAuth, (req, res) => {
       : (product.market_price != null ? product.market_price : null);
   }
   const priceTypeValue = type === "OUT" ? (priceType === "market" ? "market" : "retail") : null;
-  db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, market_price, price_type, timestamp) VALUES (?,?,?,?,?,?,?,?,?,?)")
-    .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, marketPriceValue, priceTypeValue, ts);
+  const customerNameValue = type === "OUT" && customerName && String(customerName).trim() ? String(customerName).trim() : null;
+  db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, market_price, price_type, customer_name, timestamp) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, marketPriceValue, priceTypeValue, customerNameValue, ts);
   const newStock = roundQty(type === "IN" ? product.stock + quantity : product.stock - quantity);
   db.prepare("UPDATE products SET stock = ? WHERE id = ?").run(newStock, productId);
   res.json({
