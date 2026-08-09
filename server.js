@@ -524,3 +524,33 @@ app.get("*", (req, res) => {
 app.listen(PORT, () => {
   console.log(`STOCKLINE server running on port ${PORT}`);
 });
+
+// Run the recovery scan once at boot too, so results land directly in the
+// deploy logs without needing an external authenticated request.
+try {
+  const dbPath = process.env.DATABASE_PATH || path.join(__dirname, "stockline.db");
+  const buf = fs.readFileSync(dbPath);
+  const liveIds = new Set(db.prepare("SELECT id FROM transactions").all().map((r) => r.id));
+  const text = buf.toString("latin1");
+  const seen = new Set();
+  const findings = [];
+  const re = /txn_[a-z0-9]{10,16}/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const id = m[0];
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (liveIds.has(id)) continue;
+    const start = Math.max(0, m.index - 40);
+    const end = Math.min(text.length, m.index + 300);
+    const printable = text.slice(start, end).match(/[ -~]{3,}/g) || [];
+    findings.push({ id, fragments: printable });
+  }
+  console.log(`\n[BOOT RECOVERY SCAN] DB file: ${buf.length} bytes. Live transactions: ${liveIds.size}. Recoverable candidates not in live table: ${findings.length}`);
+  for (const f of findings) {
+    console.log(`[BOOT RECOVERY SCAN] ${f.id} :: ${f.fragments.join(" | ")}`);
+  }
+  console.log("[BOOT RECOVERY SCAN] done\n");
+} catch (e) {
+  console.log("[BOOT RECOVERY SCAN ERROR]", e.message);
+}
