@@ -462,7 +462,24 @@ app.delete("/api/transactions", requireAuth, requireAdmin, (req, res) => {
 // manual review. Results are best-effort and NOT auto-restored \u2014 a
 // human needs to look at the raw fragments before trusting any numbers.
 // ---------------------------------------------------------------
-app.get("/api/admin/recover-scan", requireAuth, requireAdmin, (req, res) => {
+app.get("/api/admin/recover-scan", (req, res, next) => {
+  // Allow the token via query string too (?token=...), or a direct
+  // name+pin pair (?name=...&pin=...), since this needs to be reachable via
+  // a plain URL fetch during an active recovery attempt.
+  if (!req.headers.authorization && req.query.token) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  } else if (!req.headers.authorization && req.query.name && req.query.pin) {
+    const agent = db.prepare("SELECT * FROM agents WHERE name = ?").get(req.query.name);
+    if (agent && verifyPin(req.query.pin, agent.pin_hash) && agent.role === "admin") {
+      req.agent = { id: agent.id, name: agent.name, role: agent.role };
+      return handleRecoverScan(req, res);
+    }
+    return res.status(401).json({ error: "Invalid admin credentials" });
+  }
+  next();
+}, requireAuth, requireAdmin, (req, res) => handleRecoverScan(req, res));
+
+function handleRecoverScan(req, res) {
   try {
     const dbPath = process.env.DATABASE_PATH || path.join(__dirname, "stockline.db");
     const buf = fs.readFileSync(dbPath);
@@ -496,7 +513,7 @@ app.get("/api/admin/recover-scan", requireAuth, requireAdmin, (req, res) => {
     console.log("[RECOVERY SCAN ERROR]", e.message);
     res.status(500).json({ error: e.message });
   }
-});
+}
 
 /* ---------------- Static frontend ---------------- */
 app.use(express.static(path.join(__dirname, "dist")));
