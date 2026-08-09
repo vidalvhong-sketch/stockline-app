@@ -450,6 +450,54 @@ app.delete("/api/transactions", requireAuth, requireAdmin, (req, res) => {
   res.json({ ok: true, deleted: result.changes });
 });
 
+// ---------------------------------------------------------------
+// TEMPORARY, read-only forensic recovery attempt for accidentally-deleted
+// transactions. SQLite doesn't necessarily zero out deleted row bytes on
+// disk immediately (unless secure_delete is on, or the pages get reused by
+// later writes) \u2014 so there's a real chance fragments of the deleted
+// rows are still sitting in the raw .db file even though the live table no
+// longer references them. This does NOT modify the database. It reads the
+// raw file bytes, looks for "txn_" id patterns that no longer exist in the
+// live table, and dumps whatever nearby readable text it can find for
+// manual review. Results are best-effort and NOT auto-restored \u2014 a
+// human needs to look at the raw fragments before trusting any numbers.
+// ---------------------------------------------------------------
+app.get("/api/admin/recover-scan", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const dbPath = process.env.DATABASE_PATH || path.join(__dirname, "stockline.db");
+    const buf = fs.readFileSync(dbPath);
+    const liveIds = new Set(db.prepare("SELECT id FROM transactions").all().map((r) => r.id));
+
+    const text = buf.toString("latin1"); // 1 byte per char, safe for binary scanning
+    const seen = new Set();
+    const findings = [];
+    const re = /txn_[a-z0-9]{10,16}/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const id = m[0];
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (liveIds.has(id)) continue; // still exists live, not a deleted fragment
+      const start = Math.max(0, m.index - 40);
+      const end = Math.min(text.length, m.index + 300);
+      const windowRaw = text.slice(start, end);
+      // Extract printable ASCII runs as candidate field fragments
+      const printable = windowRaw.match(/[ -~]{3,}/g) || [];
+      findings.push({ id, fragments: printable });
+    }
+
+    console.log(`[RECOVERY SCAN] DB file size: ${buf.length} bytes. Live transactions: ${liveIds.size}. Recoverable "txn_" ids not in live table: ${findings.length}`);
+    for (const f of findings) {
+      console.log(`[RECOVERY SCAN] ${f.id} :: ${f.fragments.join(" | ")}`);
+    }
+
+    res.json({ dbFileSizeBytes: buf.length, liveTransactionCount: liveIds.size, recoveredCandidates: findings.length, findings });
+  } catch (e) {
+    console.log("[RECOVERY SCAN ERROR]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /* ---------------- Static frontend ---------------- */
 app.use(express.static(path.join(__dirname, "dist")));
 app.get("*", (req, res) => {
