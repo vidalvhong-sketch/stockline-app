@@ -64,11 +64,27 @@ const THEMES = {
     text: "#1B2E3D", textMuted: "#5A7285", textFaint: "#8FA6B8",
     mode: "light",
   },
+  elderly: {
+    // Deep coffee/espresso background with cream text \u2014 chosen for high
+    // contrast rather than the more muted tones the other dark themes use,
+    // since contrast matters more than atmosphere here. Combined with the
+    // Atkinson Hyperlegible font and a global size increase (see the
+    // "theme-elderly" CSS class), this is meant to read easily at a glance.
+    bg: "#241811", surface: "#332216", surfaceRaised: "#402B1A", surfaceInput: "#2B1D13",
+    border: "#5C4530", borderStrong: "#7A5C3E",
+    amber: "#F2B705", amberDim: "#5C4506", amberText: "#FFE8A3",
+    in: "#4ADE80", inDim: "#1E4A30", inText: "#C3F5D6",
+    out: "#F87171", outDim: "#5C2420", outText: "#FBD4D1",
+    waste: "#E0AC69", wasteDim: "#4A3520", wasteText: "#F2DBB8",
+    text: "#FBF3E9", textMuted: "#D9C4AC", textFaint: "#AD9276",
+    mode: "dark",
+    largeText: true,
+  },
 };
 
-const THEME_ORDER = ["black", "white", "green", "pink", "blue"];
-const THEME_LABELS = { black: "Black", white: "White", green: "Green", pink: "Light pink", blue: "Light blue" };
-const THEME_SWATCH = { black: "#141A22", white: "#FFFFFF", green: "#16261C", pink: "#FFD3E2", blue: "#CFE6FB" };
+const THEME_ORDER = ["black", "white", "green", "pink", "blue", "elderly"];
+const THEME_LABELS = { black: "Black", white: "White", green: "Green", pink: "Light pink", blue: "Light blue", elderly: "Elderly (large text)" };
+const THEME_SWATCH = { black: "#141A22", white: "#FFFFFF", green: "#16261C", pink: "#FFD3E2", blue: "#CFE6FB", elderly: "#402B1A" };
 
 // A single mutable palette object that every component reads from at render
 // time. The App component re-applies the selected theme's values onto this
@@ -581,7 +597,7 @@ function Login({ onLoggedIn, themeKey, applyTheme }) {
   }
 
   return (
-    <div style={{ background: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", position: "relative", ...fontBody }}>
+    <div className={themeKey === "elderly" ? "theme-elderly" : ""} style={{ background: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", position: "relative", ...fontBody }}>
       {applyTheme && (
         <div style={{ position: "absolute", top: 20, right: 20, width: 140 }}>
           <ThemeSwitcher themeKey={themeKey} onChange={applyTheme} direction="down" align="right" />
@@ -844,7 +860,7 @@ export default function App() {
 
   if (isMobile) {
     return (
-      <div style={{ background: T.bg, minHeight: "100vh", ...fontBody }}>
+      <div className={themeKey === "elderly" ? "theme-elderly" : ""} style={{ background: T.bg, minHeight: "100vh", ...fontBody }}>
         {/* Top bar */}
         <div style={{
           position: "fixed", top: 0, left: 0, right: 0, height: 52, zIndex: 20,
@@ -918,7 +934,7 @@ export default function App() {
   }
 
   return (
-    <div style={{ background: T.bg, minHeight: "100vh", display: "flex", ...fontBody }}>
+    <div className={themeKey === "elderly" ? "theme-elderly" : ""} style={{ background: T.bg, minHeight: "100vh", display: "flex", ...fontBody }}>
       <div style={{ width: 208, background: T.surface, borderRight: `1px solid ${T.border}`, padding: "20px 14px", flexShrink: 0 }}>
         <div style={{ padding: "0 8px 20px", borderBottom: `1px solid ${T.border}`, marginBottom: 16 }}>
           <div style={{ ...fontDisplay, fontWeight: 700, fontSize: 17, color: T.text, display: "flex", alignItems: "center", gap: 8 }}>

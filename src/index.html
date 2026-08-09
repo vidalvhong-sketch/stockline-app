@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>STOCKLINE — Inventory Control</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet" />
 
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#141A22" />
@@ -31,6 +31,17 @@
           background: #fff !important; color: #000 !important; border-color: #ccc !important;
         }
         @page { margin: 12mm; }
+      }
+
+      /* Elderly theme: a clearer, more legible font (Atkinson Hyperlegible,
+         designed specifically for readability at low vision) plus a
+         uniform size increase across the whole app \u2014 zoom scales text,
+         icons, buttons, and spacing together so nothing looks mismatched. */
+      .theme-elderly, .theme-elderly * {
+        font-family: "Atkinson Hyperlegible", Arial, sans-serif !important;
+      }
+      .theme-elderly {
+        zoom: 1.45;
       }
     </style>
   </head>
