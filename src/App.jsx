@@ -796,10 +796,10 @@ export default function App() {
       setTransactions((t) => [...t, res.transaction].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
       setProducts((prev) => prev.map((p) => (p.id === res.product.id ? res.product : p)));
       showToast(entry.type === "IN" ? "Stock in logged" : "Stock out logged", entry.type === "IN" ? "in" : "out");
-      return true;
+      return { ok: true };
     } catch (err) {
       showToast(err.message, "out");
-      return false;
+      return { ok: false, error: err.message };
     }
   }
 
@@ -1660,12 +1660,12 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
   async function submit(e) {
     e.preventDefault();
     if (!productId || !qty || !staff) return;
-    const ok = await onLog({
+    const res = await onLog({
       productId, type, qty: Number(qty), staff, supplierId: supplierId || null,
       price: Number(price),
       timestamp: timestamp ? new Date(timestamp).toISOString() : undefined,
     });
-    if (ok !== false) { setQty(""); setSupplierId(""); setTimestamp(""); }
+    if (res.ok) { setQty(""); setSupplierId(""); setTimestamp(""); }
   }
 
   const customerNames = [...new Set(transactions.filter((t) => t.customer_name).map((t) => t.customer_name))].sort();
@@ -1902,6 +1902,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
   const [saleTimestamp, setSaleTimestamp] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [priceMode, setPriceMode] = useState("retail"); // "retail" | "market" — default price for newly scanned items
+  const [failedLines, setFailedLines] = useState([]); // items that didn't make it onto the last completed sale
   const scanInputRef = useRef(null);
 
   useEffect(() => { scanInputRef.current && scanInputRef.current.focus(); }, []);
@@ -1934,6 +1935,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
 
   function handleScanSubmit(e) {
     e.preventDefault();
+    if (saving) return; // don't let a scan land mid-checkout \u2014 it could get silently dropped
     const trimmed = scanCode.trim();
     if (!trimmed) return;
     const product = products.find((p) => p.barcode === trimmed);
@@ -1973,12 +1975,18 @@ function PosView({ products, staffName, onLog, isMobile }) {
     const isoTimestamp = saleTimestamp ? new Date(saleTimestamp).toISOString() : new Date().toISOString();
     const remaining = [];
     const soldLines = [];
+    const failed = [];
     for (const row of cart) {
-      const ok = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, priceType: row.priceType, customerName: customerName.trim(), timestamp: isoTimestamp });
-      if (ok !== false) soldLines.push(row);
-      else remaining.push(row);
+      const res = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, priceType: row.priceType, customerName: customerName.trim(), timestamp: isoTimestamp });
+      if (res.ok) {
+        soldLines.push(row);
+      } else {
+        remaining.push(row);
+        failed.push({ name: row.name, error: res.error || "Couldn't be added" });
+      }
     }
     setCart(remaining);
+    setFailedLines(failed);
     if (soldLines.length > 0) {
       setReceipt({
         receiptNo: Date.now().toString(36).toUpperCase(),
@@ -2013,6 +2021,28 @@ function PosView({ products, staffName, onLog, isMobile }) {
     <div>
       <SectionHeader eyebrow="Checkout" title="Point of sale" />
 
+      {failedLines.length > 0 && (
+        <Card style={{ marginBottom: 16, borderColor: T.out }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <AlertTriangle size={16} color={T.out} />
+            <div style={{ ...fontDisplay, fontSize: 14, fontWeight: 700, color: T.out }}>
+              {failedLines.length} {failedLines.length === 1 ? "item didn't" : "items didn't"} make it onto the receipt
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 8 }}>
+            {"They're still in your cart below \u2014 fix the issue and try again, or remove them from the sale."}
+          </div>
+          {failedLines.map((f, i) => (
+            <div key={i} style={{ fontSize: 12, color: T.text, marginTop: 4 }}>
+              <b>{f.name}</b>: {f.error}
+            </div>
+          ))}
+          <Button variant="ghost" style={{ marginTop: 10, fontSize: 12 }} onClick={() => setFailedLines([])}>
+            <X size={12} />Dismiss
+          </Button>
+        </Card>
+      )}
+
       {!receipt && (
         <>
           <Card style={{ marginBottom: 20 }}>
@@ -2031,20 +2061,20 @@ function PosView({ products, staffName, onLog, isMobile }) {
 
             <Label>Scan barcode</Label>
             <form onSubmit={handleScanSubmit} style={{ display: "flex", gap: 10, marginTop: 6, marginBottom: 16, flexWrap: "wrap" }}>
-              <Input ref={scanInputRef} value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanError(""); }} placeholder="e.g. 041982773610" style={{ ...fontMono, maxWidth: 320 }} autoFocus />
-              <Button type="submit" variant="amber"><Plus size={14} />Add to cart</Button>
+              <Input ref={scanInputRef} value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanError(""); }} placeholder="e.g. 041982773610" style={{ ...fontMono, maxWidth: 320 }} autoFocus disabled={saving} />
+              <Button type="submit" variant="amber" disabled={saving}><Plus size={14} />Add to cart</Button>
             </form>
             {scanError && <div style={{ color: T.out, fontSize: 12, marginBottom: 12 }}>{scanError}</div>}
 
             <Label>Or find a product</Label>
             <div style={{ position: "relative", marginTop: 6, maxWidth: 360 }}>
-              <Input value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)} placeholder="Search product name" />
+              <Input value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)} placeholder="Search product name" disabled={saving} />
               {pickerResults.length > 0 && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: T.surfaceRaised, border: `1px solid ${T.borderStrong}`, borderRadius: 4, zIndex: 5, overflow: "hidden" }}>
                   {pickerResults.map((p) => (
                     <div
                       key={p.id}
-                      onClick={() => { addToCart(p); setPickerQuery(""); }}
+                      onClick={() => { if (!saving) { addToCart(p); setPickerQuery(""); } }}
                       style={{ padding: "9px 12px", cursor: "pointer", fontSize: 13, color: T.text, borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}
                     >
                       <span>{p.name}</span>
