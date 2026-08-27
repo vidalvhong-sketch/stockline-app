@@ -22,15 +22,17 @@
       * { -webkit-tap-highlight-color: transparent; }
 
       @media print {
+        @page { size: 58mm auto; margin: 2mm; }
+        html, body { width: 58mm; margin: 0; padding: 0; }
         body * { visibility: hidden; }
         .print-receipt, .print-receipt * { visibility: visible; }
         .print-receipt {
-          position: absolute; top: 0; left: 0; width: 100%;
+          position: absolute; top: 0; left: 0; width: 54mm;
         }
         .print-receipt, .print-receipt * {
           background: #fff !important; color: #000 !important; border-color: #ccc !important;
+          max-width: 54mm !important;
         }
-        @page { margin: 12mm; }
       }
 
       /* Elderly theme: a clearer, more legible font (Atkinson Hyperlegible,
