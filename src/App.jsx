@@ -155,6 +155,15 @@ function fmtDateTime(iso) {
   return d.toLocaleString("en-PH", { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+// jsPDF's built-in fonts can't render the \u20B1 (peso sign) glyph correctly,
+// even though it displays fine everywhere else in the app (normal browser
+// font rendering). Use a plain "PHP" text prefix for anything drawn into the PDF.
+function fmtMoneyPDF(n) {
+  const v = Number(n) || 0;
+  const sign = v < 0 ? "-" : "";
+  return sign + "PHP " + Math.abs(v).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // Builds a receipt PDF sized to the printer's real 48mm printable width
 // and auto-triggers the print dialog, instead of relying on window.print()
 // + CSS hide-tricks (which the RONGTA driver handled inconsistently).
@@ -208,7 +217,7 @@ function printReceiptPDF(receipt) {
   doc.setFontSize(8);
   receipt.items.forEach((row) => {
     const label = `${row.name} x${row.qty} ${row.unit}`;
-    const price = fmtMoney(row.qty * row.unitPrice);
+    const price = fmtMoneyPDF(row.qty * row.unitPrice);
     doc.text(label, marginX, y, { maxWidth: contentW * 0.62 });
     doc.text(price, W - marginX, y, { align: "right" });
     y += lineGap;
@@ -220,7 +229,7 @@ function printReceiptPDF(receipt) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.text("Total", marginX, y);
-  doc.text(fmtMoney(receipt.total), W - marginX, y, { align: "right" });
+  doc.text(fmtMoneyPDF(receipt.total), W - marginX, y, { align: "right" });
   y += 7;
 
   doc.setFont("helvetica", "normal");
