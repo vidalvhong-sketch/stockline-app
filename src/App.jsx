@@ -8,6 +8,7 @@ import {
   Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette, Download, ChevronDown, ChevronUp, Bluetooth, ArrowUpDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -152,6 +153,83 @@ function fmtMoney(n) {
 function fmtDateTime(iso) {
   const d = new Date(iso);
   return d.toLocaleString("en-PH", { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+// Builds a receipt PDF sized to the printer's real 48mm printable width
+// and auto-triggers the print dialog, instead of relying on window.print()
+// + CSS hide-tricks (which the RONGTA driver handled inconsistently).
+function printReceiptPDF(receipt) {
+  const W = 48; // mm, printable width of a 58mm-roll thermal printer
+  const marginX = 3;
+  const contentW = W - marginX * 2;
+  const lineGap = 4.2;
+
+  const metaLines = [
+    `Receipt #${receipt.receiptNo}`,
+    fmtDateTime(receipt.timestamp),
+    `Served by ${receipt.staff}`,
+    ...(receipt.customerName ? [`Customer: ${receipt.customerName}`] : []),
+  ];
+
+  // Estimate page height from content so nothing gets cut off or wastes roll.
+  const estH =
+    18 /* header block */ +
+    metaLines.length * lineGap +
+    6 /* divider padding */ +
+    receipt.items.length * lineGap +
+    6 /* divider padding */ +
+    8 /* total line */ +
+    10 /* thank you + bottom margin */;
+
+  const doc = new jsPDF({ unit: "mm", format: [W, Math.max(estH, 60)] });
+  let y = 8;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("STOCKLINE", W / 2, y, { align: "center" });
+  y += 5;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text("Sales Receipt", W / 2, y, { align: "center" });
+  y += 6;
+
+  doc.setFontSize(7.5);
+  metaLines.forEach((line) => {
+    doc.text(line, marginX, y);
+    y += lineGap;
+  });
+
+  y += 1;
+  doc.setLineDashPattern([0.5, 0.5], 0);
+  doc.line(marginX, y, W - marginX, y);
+  y += 4;
+
+  doc.setFontSize(8);
+  receipt.items.forEach((row) => {
+    const label = `${row.name} x${row.qty} ${row.unit}`;
+    const price = fmtMoney(row.qty * row.unitPrice);
+    doc.text(label, marginX, y, { maxWidth: contentW * 0.62 });
+    doc.text(price, W - marginX, y, { align: "right" });
+    y += lineGap;
+  });
+
+  doc.line(marginX, y, W - marginX, y);
+  y += 5;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Total", marginX, y);
+  doc.text(fmtMoney(receipt.total), W - marginX, y, { align: "right" });
+  y += 7;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text("Thank you!", W / 2, y, { align: "center" });
+
+  doc.autoPrint();
+  const blobUrl = doc.output("bloburl");
+  window.open(blobUrl, "_blank");
 }
 function startOfWeek(d) {
   const date = new Date(d);
@@ -2223,7 +2301,7 @@ function PosView({ products, staffName, onLog, isMobile }) {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Button variant="amber" onClick={() => window.print()}><Receipt size={14} />Print receipt</Button>
+            <Button variant="amber" onClick={() => printReceiptPDF(receipt)}><Receipt size={14} />Print receipt</Button>
             <Button variant="in" onClick={newSale}><Plus size={14} />New sale</Button>
           </div>
         </>
