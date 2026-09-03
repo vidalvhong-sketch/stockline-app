@@ -885,6 +885,17 @@ export default function App() {
       showToast(entry.type === "IN" ? "Stock in logged" : "Stock out logged", entry.type === "IN" ? "in" : "out");
       return { ok: true };
     } catch (err) {
+      // A 401 here means our token just got cleared client-side. If a caller
+      // (e.g. checkout) keeps looping after this, every remaining request
+      // goes out with no Authorization header and fails the same way, which
+      // reads as 18 unrelated errors instead of 1 session expiry. Flag it so
+      // the caller can stop immediately, and force a clean logout so the
+      // person gets a real "log in again" prompt instead of a dead session.
+      if (err.status === 401) {
+        showToast("Session expired — please log in again", "out");
+        logout();
+        return { ok: false, error: err.message, authExpired: true };
+      }
       showToast(err.message, "out");
       return { ok: false, error: err.message };
     }
@@ -2067,6 +2078,14 @@ function PosView({ products, staffName, onLog, isMobile }) {
       const res = await onLog({ productId: row.productId, type: "OUT", qty: row.qty, staff: staffName, price: row.unitPrice, marketPrice: row.marketPrice, priceType: row.priceType, customerName: customerName.trim(), timestamp: isoTimestamp });
       if (res.ok) {
         soldLines.push(row);
+      } else if (res.authExpired) {
+        // Session just got logged out from under us — every item we haven't
+        // reached yet stays untouched in the cart rather than getting sent
+        // with no token and failing individually. logMovement already
+        // showed the "log in again" toast.
+        const idx = cart.indexOf(row);
+        remaining.push(...cart.slice(idx));
+        break;
       } else {
         remaining.push(row);
         failed.push({ name: row.name, error: res.error || "Couldn't be added" });
@@ -2397,8 +2416,14 @@ function BarcodeView({ products, onSetStatus, onLog, staffName, isAdmin, isMobil
     let addedQty = 0, addedValue = 0, removedQty = 0, removedValue = 0, discardedQty = 0, discardedValue = 0;
     for (const row of cart) {
       const type = row.action === "ADD" ? "IN" : row.action === "REMOVE" ? "OUT" : "DISCARD";
-      const ok = await onLog({ productId: row.productId, type, qty: row.qty, staff: staffName });
-      if (ok !== false) {
+      const res = await onLog({ productId: row.productId, type, qty: row.qty, staff: staffName });
+      if (res.authExpired) {
+        // Session just got logged out from under us — stop instead of
+        // sending the rest of the batch with no token.
+        const idx = cart.indexOf(row);
+        remaining.push(...cart.slice(idx));
+        break;
+      } else if (res.ok) {
         const p = products.find((pp) => pp.id === row.productId);
         const unitPrice = type === "IN" ? p?.purchase_price : type === "OUT" ? p?.retail_price : p?.purchase_price;
         const value = (unitPrice || 0) * row.qty;

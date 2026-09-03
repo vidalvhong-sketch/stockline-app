@@ -35,7 +35,9 @@ async function request(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) clearSession();
-    throw new Error(data.error || "Something went wrong");
+    const err = new Error(data.error || "Something went wrong");
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
