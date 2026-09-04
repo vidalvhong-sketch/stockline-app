@@ -1111,7 +1111,6 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
   }, [transactions, granularity]);
 
   const activeProducts = products.filter((p) => p.status === "active");
-  const totalStockCostValue = products.reduce((s, p) => s + p.stock * p.purchase_price, 0);
   const lowStock = activeProducts.filter((p) => p.stock > 0 && p.stock <= 10);
   const outOfStock = activeProducts.filter((p) => p.stock === 0);
 
@@ -1144,6 +1143,37 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
     });
   }, [transactions, statsMode, statsDay, statsMonth, statsYear]);
 
+  // The cutoff moment for "stock cost as of period end" below — end of the
+  // selected day/month/year, or right now for "all time".
+  const periodEndDate = useMemo(() => {
+    if (statsMode === "day") return new Date(statsDay + "T23:59:59.999");
+    if (statsMode === "month") {
+      const [y, m] = statsMonth.split("-").map(Number);
+      return new Date(y, m, 0, 23, 59, 59, 999); // day 0 of next month = last day of this month
+    }
+    if (statsMode === "year") return new Date(Number(statsYear), 11, 31, 23, 59, 59, 999);
+    return today;
+  }, [statsMode, statsDay, statsMonth, statsYear]);
+
+  // Stock quantities are only tracked live (products.stock is "as of now"),
+  // so to see the value as of an earlier date we walk each product's stock
+  // backward, undoing every transaction that happened after the cutoff.
+  // Priced at today's purchase price (same basis "supplier rate" always
+  // used) so a period-to-period jump means quantity moved, not that price
+  // changed underneath it — makes it easier to spot exactly which entry
+  // caused the jump.
+  const totalStockCostValue = useMemo(() => {
+    const laterTxns = statsMode === "all" ? [] : transactions.filter((t) => new Date(t.timestamp) > periodEndDate);
+    const stockAsOf = new Map(products.map((p) => [p.id, p.stock]));
+    for (const t of laterTxns) {
+      const pid = t.product_id || t.productId;
+      if (!stockAsOf.has(pid)) continue;
+      const delta = t.type === "IN" ? -t.qty : t.qty; // undo: IN subtracts back, OUT/DISCARD adds back
+      stockAsOf.set(pid, stockAsOf.get(pid) + delta);
+    }
+    return products.reduce((s, p) => s + (stockAsOf.get(p.id) || 0) * p.purchase_price, 0);
+  }, [products, transactions, statsMode, periodEndDate]);
+
   const periodLabelText = useMemo(() => {
     if (statsMode === "all") return "All time";
     if (statsMode === "day") return new Date(statsDay + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
@@ -1167,7 +1197,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
   const totalSalesRevenue = totalRetailSales + totalMarketSales;
 
   const stats = [
-    { label: "Stock cost (supplier rate)", value: fmtMoney(totalStockCostValue), alwaysCurrent: true },
+    { label: statsMode === "all" ? "Stock cost (supplier rate)" : `Stock cost as of ${periodLabelText}`, value: fmtMoney(totalStockCostValue) },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
     { label: "Market sales", value: fmtMoney(totalMarketSales) },
     { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
@@ -1216,9 +1246,6 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
           <Card key={s.label} style={{ padding: 16 }}>
             <Label>{s.label}</Label>
             <div style={{ ...fontDisplay, fontSize: s.plain ? 26 : 22, fontWeight: 700, color: s.negative ? T.out : s.warn ? T.waste : T.text }}>{s.value}</div>
-            {s.alwaysCurrent && statsMode !== "all" && (
-              <div style={{ fontSize: 10, color: T.textFaint, marginTop: 4 }}>current, not filtered by period</div>
-            )}
             {s.mixedPeriod && statsMode !== "all" && (
               <div style={{ fontSize: 10, color: T.textFaint, marginTop: 4 }}>sales for this period, stock cost is current</div>
             )}
