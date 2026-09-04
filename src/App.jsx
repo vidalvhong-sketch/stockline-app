@@ -1118,68 +1118,50 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
 
   const today = new Date();
   const todayStr = localDateStr(today);
-  const thisMonthStr = localMonthStr(today);
-  const thisYearStr = String(today.getFullYear());
+  const firstOfMonthStr = localDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
 
-  const [statsMode, setStatsMode] = useState("all"); // all | day | month | year
-  const [statsDay, setStatsDay] = useState(todayStr);
-  const [statsMonth, setStatsMonth] = useState(thisMonthStr);
-  const [statsYear, setStatsYear] = useState(thisYearStr);
+  const [statsMode, setStatsMode] = useState("all"); // all | range
+  const [rangeFrom, setRangeFrom] = useState(firstOfMonthStr);
+  const [rangeTo, setRangeTo] = useState(todayStr);
 
-  const availableYears = useMemo(() => {
-    const years = new Set(transactions.map((t) => String(new Date(t.timestamp).getFullYear())));
-    years.add(thisYearStr);
-    return [...years].sort((a, b) => b - a);
-  }, [transactions]);
+  function setQuickRange(which) {
+    setStatsMode("range");
+    if (which === "thisMonth") {
+      setRangeFrom(localDateStr(new Date(today.getFullYear(), today.getMonth(), 1)));
+      setRangeTo(todayStr);
+    } else if (which === "lastMonth") {
+      setRangeFrom(localDateStr(new Date(today.getFullYear(), today.getMonth() - 1, 1)));
+      setRangeTo(localDateStr(new Date(today.getFullYear(), today.getMonth(), 0)));
+    } else if (which === "thisYear") {
+      setRangeFrom(localDateStr(new Date(today.getFullYear(), 0, 1)));
+      setRangeTo(todayStr);
+    }
+  }
 
   const periodTransactions = useMemo(() => {
     if (statsMode === "all") return transactions;
+    const from = new Date(rangeFrom + "T00:00:00.000");
+    const to = new Date(rangeTo + "T23:59:59.999");
     return transactions.filter((t) => {
       const d = new Date(t.timestamp);
-      if (statsMode === "day") return localDateStr(d) === statsDay;
-      if (statsMode === "month") return localMonthStr(d) === statsMonth;
-      if (statsMode === "year") return String(d.getFullYear()) === statsYear;
-      return true;
+      return d >= from && d <= to;
     });
-  }, [transactions, statsMode, statsDay, statsMonth, statsYear]);
-
-  // The cutoff moment for "stock cost as of period end" below — end of the
-  // selected day/month/year, or right now for "all time".
-  const periodEndDate = useMemo(() => {
-    if (statsMode === "day") return new Date(statsDay + "T23:59:59.999");
-    if (statsMode === "month") {
-      const [y, m] = statsMonth.split("-").map(Number);
-      return new Date(y, m, 0, 23, 59, 59, 999); // day 0 of next month = last day of this month
-    }
-    if (statsMode === "year") return new Date(Number(statsYear), 11, 31, 23, 59, 59, 999);
-    return today;
-  }, [statsMode, statsDay, statsMonth, statsYear]);
-
-  // Stock quantities are only tracked live (products.stock is "as of now"),
-  // so to see the value as of an earlier date we walk each product's stock
-  // backward, undoing every transaction that happened after the cutoff.
-  // Priced at today's purchase price (same basis "supplier rate" always
-  // used) so a period-to-period jump means quantity moved, not that price
-  // changed underneath it — makes it easier to spot exactly which entry
-  // caused the jump.
-  const totalStockCostValue = useMemo(() => {
-    const laterTxns = statsMode === "all" ? [] : transactions.filter((t) => new Date(t.timestamp) > periodEndDate);
-    const stockAsOf = new Map(products.map((p) => [p.id, p.stock]));
-    for (const t of laterTxns) {
-      const pid = t.product_id || t.productId;
-      if (!stockAsOf.has(pid)) continue;
-      const delta = t.type === "IN" ? -t.qty : t.qty; // undo: IN subtracts back, OUT/DISCARD adds back
-      stockAsOf.set(pid, stockAsOf.get(pid) + delta);
-    }
-    return products.reduce((s, p) => s + (stockAsOf.get(p.id) || 0) * p.purchase_price, 0);
-  }, [products, transactions, statsMode, periodEndDate]);
+  }, [transactions, statsMode, rangeFrom, rangeTo]);
 
   const periodLabelText = useMemo(() => {
     if (statsMode === "all") return "All time";
-    if (statsMode === "day") return new Date(statsDay + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
-    if (statsMode === "month") return new Date(statsMonth + "-01T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long" });
-    return statsYear;
-  }, [statsMode, statsDay, statsMonth, statsYear]);
+    const fmt = (s) => new Date(s + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+    return rangeFrom === rangeTo ? fmt(rangeFrom) : `${fmt(rangeFrom)} – ${fmt(rangeTo)}`;
+  }, [statsMode, rangeFrom, rangeTo]);
+
+  // How much cash went INTO stock during the selected window — every IN
+  // transaction's recorded cost, summed. Duration-based (not a point-in-time
+  // snapshot), so "This month" genuinely answers "how much did we invest
+  // this month".
+  const totalStockInvested = useMemo(
+    () => periodTransactions.filter((t) => t.type === "IN").reduce((s, t) => s + t.price * t.qty, 0),
+    [periodTransactions]
+  );
 
   const totalRetailSales = useMemo(
     () => periodTransactions.filter((t) => t.type === "OUT" && t.price_type !== "market").reduce((s, t) => s + t.price * t.qty, 0),
@@ -1195,13 +1177,17 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
   );
 
   const totalSalesRevenue = totalRetailSales + totalMarketSales;
+  // What came back from the stock invested this period, after subtracting
+  // what was lost/discarded — the actual return on the money put into stock.
+  const netFromInvestment = totalSalesRevenue - totalStockInvested - totalDiscarded;
 
   const stats = [
-    { label: statsMode === "all" ? "Stock cost (supplier rate)" : `Stock cost as of ${periodLabelText}`, value: fmtMoney(totalStockCostValue) },
+    { label: statsMode === "all" ? "Stock invested (all time)" : `Stock invested (${periodLabelText})`, value: fmtMoney(totalStockInvested) },
     { label: "Retail sales", value: fmtMoney(totalRetailSales) },
     { label: "Market sales", value: fmtMoney(totalMarketSales) },
     { label: "Lost / discarded", value: fmtMoney(totalDiscarded), warn: true },
     { label: "Total sales / revenue", value: fmtMoney(totalSalesRevenue) },
+    { label: "Net from investment", value: fmtMoney(netFromInvestment), negative: netFromInvestment < 0 },
   ];
 
   return (
@@ -1213,30 +1199,29 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
       } />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          {["all", "day", "month", "year"].map((m) => (
-            <button key={m} onClick={() => setStatsMode(m)} style={{
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={() => setStatsMode("all")} style={{
+            ...fontMono, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em",
+            padding: "6px 12px", borderRadius: 3, cursor: "pointer",
+            background: statsMode === "all" ? T.amber : "transparent",
+            color: statsMode === "all" ? "#241B02" : T.textMuted,
+            border: `1px solid ${statsMode === "all" ? T.amber : T.border}`,
+          }}>All time</button>
+          {[["thisMonth", "This month"], ["lastMonth", "Last month"], ["thisYear", "This year"]].map(([key, lbl]) => (
+            <button key={key} onClick={() => setQuickRange(key)} style={{
               ...fontMono, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em",
               padding: "6px 12px", borderRadius: 3, cursor: "pointer",
-              background: statsMode === m ? T.amber : "transparent",
-              color: statsMode === m ? "#241B02" : T.textMuted,
-              border: `1px solid ${statsMode === m ? T.amber : T.border}`,
-            }}>
-              {m === "all" ? "All time" : m}
-            </button>
+              background: "transparent", color: T.textMuted, border: `1px solid ${T.border}`,
+            }}>{lbl}</button>
           ))}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {statsMode === "day" && (
-            <Input type="date" value={statsDay} onChange={(e) => setStatsDay(e.target.value)} style={{ width: 160 }} />
-          )}
-          {statsMode === "month" && (
-            <Input type="month" value={statsMonth} onChange={(e) => setStatsMonth(e.target.value)} style={{ width: 160 }} />
-          )}
-          {statsMode === "year" && (
-            <Select value={statsYear} onChange={(e) => setStatsYear(e.target.value)} style={{ width: 120 }}>
-              {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
-            </Select>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {statsMode === "range" && (
+            <>
+              <Input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} style={{ width: 150 }} />
+              <span style={{ ...fontMono, fontSize: 11, color: T.textFaint }}>to</span>
+              <Input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} style={{ width: 150 }} />
+            </>
           )}
           <span style={{ ...fontMono, fontSize: 11, color: T.textFaint }}>Showing: {periodLabelText}</span>
         </div>
@@ -1246,12 +1231,10 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
           <Card key={s.label} style={{ padding: 16 }}>
             <Label>{s.label}</Label>
             <div style={{ ...fontDisplay, fontSize: s.plain ? 26 : 22, fontWeight: 700, color: s.negative ? T.out : s.warn ? T.waste : T.text }}>{s.value}</div>
-            {s.mixedPeriod && statsMode !== "all" && (
-              <div style={{ fontSize: 10, color: T.textFaint, marginTop: 4 }}>sales for this period, stock cost is current</div>
-            )}
           </Card>
         ))}
       </div>
+
 
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
