@@ -538,32 +538,75 @@ function BarcodeDivider() {
   );
 }
 
-/* Floating sync status: shows when offline, when entries are waiting to be
-   sent, while syncing, and when the server refused something. Hidden when
-   everything is online and synced. */
-function SyncStatus({ online, pendingCount, syncing, savedAt, failures, products, onSync, onDismissFailures, bottom }) {
+/* Connection bar: always visible at the top of every page. Shows whether
+   the app is online, offline (working from the saved copy) or syncing, how
+   many entries are waiting, when data was last updated, and a Refresh
+   button that sends anything waiting and pulls the latest data. */
+function StatusBar({ online, pendingCount, syncing, refreshing, savedAt, failures, products, onRefresh, onDismissFailures, isMobile }) {
   const [open, setOpen] = useState(false);
-  if (online && !pendingCount && !syncing && !failures.length) return null;
-  const color = failures.length ? T.out : !online ? T.amber : T.textMuted;
-  let text;
-  if (syncing) text = `Syncing ${pendingCount}\u2026`;
-  else if (!online) text = pendingCount ? `Offline \u2014 ${pendingCount} waiting to sync` : "Offline";
-  else if (pendingCount) text = `${pendingCount} waiting to sync`;
-  else text = `${failures.length} couldn't sync`;
+  const busy = syncing || refreshing;
+  const state = busy ? "syncing" : online ? "online" : "offline";
+  const colors = { online: T.in, offline: T.amber, syncing: T.textMuted };
+  const color = colors[state];
+  const labels = { online: "Online", offline: "Offline", syncing: syncing ? "Syncing" : "Refreshing" };
+
+  let detail;
+  if (state === "syncing") detail = syncing && pendingCount ? `sending ${pendingCount} ${pendingCount === 1 ? "entry" : "entries"}\u2026` : "getting latest data\u2026";
+  else if (state === "offline") detail = pendingCount ? `${pendingCount} waiting to sync` : "using saved copy";
+  else detail = pendingCount ? `${pendingCount} waiting to sync` : "all synced";
+
+  const updatedText = savedAt
+    ? new Date(savedAt).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })
+    : "\u2014";
   const name = (id) => (products.find((p) => p.id === id) || {}).name || "Deleted product";
 
   return (
-    <div style={{ position: "fixed", right: 16, bottom, zIndex: 25, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, maxWidth: "calc(100vw - 32px)" }}>
+    <div style={{ position: "relative", marginBottom: isMobile ? 0 : 18 }}>
+      <style>{"@keyframes sl-spin { to { transform: rotate(360deg); } } @keyframes sl-pulse { 50% { opacity: 0.35; } }"}</style>
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        background: state === "offline" ? T.amberDim : T.surface,
+        border: `1px solid ${state === "offline" ? T.amber : T.border}`,
+        borderRadius: isMobile ? 0 : 6, padding: isMobile ? "6px 14px" : "8px 14px",
+      }}>
+        <button onClick={() => setOpen((o) => !o)} style={{
+          display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none",
+          cursor: "pointer", padding: 0, minWidth: 0, color: T.text,
+        }}>
+          {state === "offline"
+            ? <WifiOff size={14} color={color} style={{ flexShrink: 0 }} />
+            : <span style={{ width: 9, height: 9, borderRadius: "50%", background: color, flexShrink: 0, animation: state === "syncing" ? "sl-pulse 1s ease-in-out infinite" : "none" }} />}
+          <span style={{ ...fontMono, fontSize: 12, fontWeight: 600, color, letterSpacing: "0.04em", textTransform: "uppercase" }}>{labels[state]}</span>
+          <span style={{ fontSize: 12, color: T.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{`\u00b7 ${detail}`}</span>
+          {failures.length > 0 && (
+            <span style={{ fontSize: 11, color: T.out, whiteSpace: "nowrap" }}>{`\u00b7 ${failures.length} failed`}</span>
+          )}
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          {!isMobile && <span style={{ ...fontMono, fontSize: 11, color: T.textFaint }}>{`Updated ${updatedText}`}</span>}
+          <button onClick={onRefresh} disabled={busy} title="Send anything waiting and get the latest data" style={{
+            display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "5px 9px" : "5px 11px", borderRadius: 4,
+            background: T.surfaceRaised, border: `1px solid ${T.borderStrong}`, color: T.text,
+            cursor: busy ? "default" : "pointer", fontSize: 12, opacity: busy ? 0.7 : 1,
+          }}>
+            <RefreshCw size={13} style={{ animation: busy ? "sl-spin 0.9s linear infinite" : "none" }} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
       {open && (
-        <Card style={{ width: 320, maxWidth: "100%", padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
+        <Card style={{ position: "absolute", top: "100%", left: isMobile ? 8 : 0, marginTop: 6, width: 340, maxWidth: "calc(100vw - 16px)", padding: 14, zIndex: 26, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
           <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.6 }}>
-            {online ? "Connected." : "No internet. Sales, stock-ins, discards and scanner batches are saved on this device and sent automatically when the connection is back."}
-            {savedAt && <div style={{ color: T.textFaint, marginTop: 4 }}>{`Offline copy saved ${fmtDateTime(savedAt)}`}</div>}
-            {!online && <div style={{ color: T.textFaint, marginTop: 4 }}>{"Adding or editing products, suppliers and agents needs a connection."}</div>}
+            {state === "offline"
+              ? "No connection to the server. Sales, stock-ins, discards and scanner batches are saved on this device and sent automatically when the connection is back. Adding or editing products, suppliers and agents needs a connection."
+              : "Connected to the server. Anything saved offline is sent automatically."}
+            <div style={{ color: T.textFaint, marginTop: 6 }}>{`Data last updated: ${savedAt ? fmtDateTime(savedAt) : "not yet"}`}</div>
+            <div style={{ color: T.textFaint }}>{`Waiting to sync: ${pendingCount}`}</div>
           </div>
           {failures.length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, color: T.out, fontWeight: 600, marginBottom: 6 }}>{"These were refused by the server and were not recorded:"}</div>
+              <div style={{ fontSize: 12, color: T.out, fontWeight: 600, marginBottom: 6 }}>{"Refused by the server and not recorded:"}</div>
               {failures.map((f) => (
                 <div key={f.id} style={{ fontSize: 12, color: T.text, borderTop: `1px solid ${T.border}`, padding: "6px 0" }}>
                   {`${f.type} ${f.qty} \u00b7 ${name(f.productId)} \u00b7 ${fmtDateTime(f.timestamp)}`}
@@ -574,19 +617,11 @@ function SyncStatus({ online, pendingCount, syncing, savedAt, failures, products
               <Button variant="ghost" onClick={onDismissFailures}>Dismiss</Button>
             </div>
           )}
-          {online && pendingCount > 0 && !syncing && (
-            <div style={{ marginTop: 10 }}><Button variant="ghost" onClick={onSync}><RefreshCw size={13} />Sync now</Button></div>
-          )}
+          <div style={{ marginTop: 10, textAlign: "right" }}>
+            <Button variant="ghost" onClick={() => setOpen(false)}>Close</Button>
+          </div>
         </Card>
       )}
-      <button onClick={() => setOpen((o) => !o)} style={{
-        display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 20, cursor: "pointer",
-        background: T.surfaceRaised, border: `1px solid ${color}`, color, ...fontMono, fontSize: 11,
-        boxShadow: "0 4px 14px rgba(0,0,0,0.3)",
-      }}>
-        {syncing ? <RefreshCw size={13} /> : !online ? <WifiOff size={13} /> : <AlertTriangle size={13} />}
-        {text}
-      </button>
     </div>
   );
 }
@@ -648,7 +683,7 @@ function StockCheckCard({ transactions, showToast }) {
               {rows.map((r) => (
                 <tr key={r.id} style={{ borderBottom: `1px solid ${T.border}` }}>
                   <td style={{ padding: "8px 10px", color: T.text }}>{r.name}</td>
-                  <td style={{ padding: "8px 10px", ...fontMono }}>{r.stock} {r.unit || "pcs"}</td>
+                  <td style={{ padding: "8px 10px", ...fontMono, color: T.text }}>{r.stock} {r.unit || "pcs"}</td>
                   <td style={{ padding: "8px 10px", ...fontMono, color: T.textMuted }}>{r.log_total} {r.unit || "pcs"}</td>
                   <td style={{ padding: "8px 10px", ...fontMono, color: T.amber }}>{r.difference > 0 ? `+${r.difference}` : r.difference} {r.unit || "pcs"}</td>
                 </tr>
@@ -886,6 +921,7 @@ export default function App() {
   const [syncFailures, setSyncFailures] = useState([]);
   const [savedAt, setSavedAt] = useState(null); // when the offline copy was last downloaded
   const syncingRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const isAdmin = role === "admin";
 
@@ -1002,6 +1038,45 @@ export default function App() {
       window.removeEventListener("offline", goOffline);
       clearInterval(timer);
     };
+  }, [ready]);
+
+  // Refresh button: send anything waiting, then pull the latest data.
+  async function handleRefresh() {
+    if (refreshing || syncingRef.current) return;
+    setRefreshing(true);
+    try {
+      await syncNow();
+      await refreshFromServer();
+      setOnline(true);
+      showToast("Up to date", "in");
+    } catch (err) {
+      if (err.offline) {
+        setOnline(false);
+        showToast("Still offline \u2014 showing the copy saved on this device", "out");
+      } else {
+        showToast(err.message, "out");
+      }
+    }
+    setRefreshing(false);
+  }
+
+  // Connection check every 15 seconds. navigator.onLine only knows about
+  // the phone's own wifi/data, not whether the server can actually be
+  // reached, so ask the server directly. When it comes back, sync.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    async function check() {
+      const ok = await api.ping();
+      if (cancelled) return;
+      setOnline((was) => {
+        if (ok && !was) setTimeout(() => syncNow(), 0);
+        return ok;
+      });
+    }
+    check();
+    const timer = setInterval(check, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
   }, [ready]);
 
   async function dismissSyncFailures() {
@@ -1233,7 +1308,7 @@ export default function App() {
 
   const toastEl = toast && (
     <div style={{
-      position: "fixed", top: isMobile ? 60 : 20, left: isMobile ? 12 : "auto", right: isMobile ? 12 : 28, zIndex: 30,
+      position: "fixed", top: isMobile ? 104 : 64, left: isMobile ? 12 : "auto", right: isMobile ? 12 : 28, zIndex: 30,
       background: toast.tone === "in" ? T.inDim : toast.tone === "out" ? T.outDim : T.surfaceRaised,
       border: `1px solid ${toast.tone === "in" ? T.in : toast.tone === "out" ? T.out : T.border}`,
       color: T.text, padding: "10px 16px", borderRadius: 4, fontSize: 13, ...fontBody,
@@ -1244,11 +1319,11 @@ export default function App() {
     </div>
   );
 
-  const syncEl = (
-    <SyncStatus
-      online={online} pendingCount={pendingCount} syncing={syncing} savedAt={savedAt}
-      failures={syncFailures} products={products} onSync={syncNow} onDismissFailures={dismissSyncFailures}
-      bottom={isMobile ? 70 : 16}
+  const statusEl = (
+    <StatusBar
+      online={online} pendingCount={pendingCount} syncing={syncing} refreshing={refreshing} savedAt={savedAt}
+      failures={syncFailures} products={products} onRefresh={handleRefresh} onDismissFailures={dismissSyncFailures}
+      isMobile={isMobile}
     />
   );
 
@@ -1290,10 +1365,14 @@ export default function App() {
         )}
 
         {toastEl}
-        {syncEl}
+
+        {/* Connection bar, fixed under the top bar */}
+        <div style={{ position: "fixed", top: 52, left: 0, right: 0, zIndex: 19 }}>
+          {statusEl}
+        </div>
 
         {/* Content */}
-        <div style={{ paddingTop: 68, paddingBottom: 76, paddingLeft: 14, paddingRight: 14 }}>
+        <div style={{ paddingTop: 104, paddingBottom: 76, paddingLeft: 14, paddingRight: 14 }}>
           {mainContent}
         </div>
 
@@ -1384,7 +1463,9 @@ export default function App() {
 
       <div style={{ flex: 1, padding: 28, minWidth: 0, position: "relative" }}>
         {toastEl}
-        {syncEl}
+        <div style={{ position: "sticky", top: 0, zIndex: 19, background: T.bg, paddingTop: 2 }}>
+          {statusEl}
+        </div>
         {mainContent}
       </div>
     </div>

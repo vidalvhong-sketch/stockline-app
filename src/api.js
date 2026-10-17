@@ -56,7 +56,22 @@ async function request(path, options = {}) {
   return data;
 }
 
+// Quick "can we reach the server?" check, used for the Online/Offline
+// indicator. Never throws: true = reachable, false = not.
+async function ping() {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch("/api/ping", { cache: "no-store", signal: ctrl.signal });
+    clearTimeout(t);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export const api = {
+  ping,
   login: (name, pin) => request("/auth/login", { method: "POST", body: JSON.stringify({ name, pin }) }),
   getState: () => request("/state"),
   addSupplier: (payload) => request("/suppliers", { method: "POST", body: JSON.stringify(payload) }),

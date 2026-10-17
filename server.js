@@ -304,6 +304,12 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+/* ---------------- Connection check (used by the Online/Offline indicator) ---------------- */
+app.get("/api/ping", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true });
+});
+
 /* ---------------- Auth ---------------- */
 app.post("/api/auth/login", (req, res) => {
   const { name, pin } = req.body || {};
