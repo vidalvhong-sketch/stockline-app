@@ -401,6 +401,14 @@ app.post("/api/products", requireAuth, requireAdmin, (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: "That barcode is already in use" });
   }
+  // Opening stock gets a matching "Product in" entry so the movement log
+  // and Stock invested both account for it (otherwise the stock exists but
+  // was never "bought", and selling it inflates Net from investment).
+  const openingQty = roundQty(Number(stock) || 0);
+  if (openingQty > 0) {
+    db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)")
+      .run(genId("txn"), id, "IN", openingQty, req.agent.name, null, Number(purchasePrice), new Date().toISOString());
+  }
   res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(id));
 });
 
@@ -431,6 +439,15 @@ app.patch("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
       .run(name, category, (unit && unit.trim()) || "pcs", code, Number(purchasePrice), Number(retailPrice), hasMarket ? Number(marketPrice) : null, nextStock, product.id);
   } catch (e) {
     return res.status(400).json({ error: "That barcode is already in use" });
+  }
+  // A stock change made in the product form is recorded as an ADJUST entry
+  // (signed qty, no money value) so the movement log keeps adding up to the
+  // live stock. ADJUST is a count correction, so it never touches sales,
+  // Stock invested, or discard totals.
+  const stockDiff = roundQty(nextStock - product.stock);
+  if (stockDiff !== 0) {
+    db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)")
+      .run(genId("txn"), product.id, "ADJUST", stockDiff, req.agent.name, null, 0, new Date().toISOString());
   }
   logVoid("edit", "product", product.id, `Edited product "${product.name}"`, product, req.agent.name);
   res.json(db.prepare("SELECT * FROM products WHERE id = ?").get(product.id));
@@ -468,7 +485,9 @@ app.post("/api/transactions", requireAuth, (req, res) => {
       ? Number(marketPrice)
       : (product.market_price != null ? product.market_price : null);
   }
-  const priceTypeValue = type === "OUT" ? (priceType === "market" ? "market" : "retail") : null;
+  // Only count a sale as "market" if the product actually has a market
+  // price — otherwise it was charged at retail and belongs in Retail sales.
+  const priceTypeValue = type === "OUT" ? (priceType === "market" && product.market_price != null ? "market" : "retail") : null;
   const customerNameValue = type === "OUT" && customerName && String(customerName).trim() ? String(customerName).trim() : null;
   db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, market_price, price_type, customer_name, timestamp) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
     .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, marketPriceValue, priceTypeValue, customerNameValue, ts);
@@ -483,10 +502,20 @@ app.post("/api/transactions", requireAuth, (req, res) => {
 app.delete("/api/transactions/:id", requireAuth, requireAdmin, (req, res) => {
   const txn = db.prepare("SELECT * FROM transactions WHERE id = ?").get(req.params.id);
   if (!txn) return res.status(404).json({ error: "Transaction not found" });
-  const product = db.prepare("SELECT name FROM products WHERE id = ?").get(txn.product_id);
+  const product = db.prepare("SELECT * FROM products WHERE id = ?").get(txn.product_id);
+  // Undo the entry's effect on stock, so deleting a sale puts the items back
+  // and deleting a stock-in takes them out again.
+  if (product) {
+    const delta = txn.type === "IN" || txn.type === "ADJUST" ? -txn.qty : txn.qty;
+    const restored = roundQty(product.stock + delta);
+    if (restored < 0) {
+      return res.status(400).json({ error: `Can't delete \u2014 ${product.name} only has ${product.stock} left, so removing this entry would make stock negative` });
+    }
+    db.prepare("UPDATE products SET stock = ? WHERE id = ?").run(restored, product.id);
+  }
   db.prepare("DELETE FROM transactions WHERE id = ?").run(txn.id);
   logVoid("delete", "transaction", txn.id, `Deleted ${txn.type} entry for "${product ? product.name : txn.product_id}" (qty ${txn.qty})`, txn, req.agent.name);
-  res.json({ ok: true, id: txn.id });
+  res.json({ ok: true, id: txn.id, product: product ? db.prepare("SELECT * FROM products WHERE id = ?").get(product.id) : null });
 });
 
 app.delete("/api/transactions", requireAuth, requireAdmin, (req, res) => {
@@ -514,6 +543,39 @@ app.delete("/api/transactions", requireAuth, requireAdmin, (req, res) => {
   const scopeDesc = all === "true" ? "ALL movement history" : `movement history ${after ? `from ${after} ` : ""}${before ? `before ${before}` : ""}`.trim();
   logVoid("bulk_delete", "transaction", null, `Purged ${result.changes} entries \u2014 ${scopeDesc}`, null, req.agent.name);
   res.json({ ok: true, deleted: result.changes });
+});
+
+/* ---------------- Stock check (stock vs movement log) ---------------- */
+// Lists every product whose live stock doesn't equal what its movement log
+// adds up to (IN + ADJUST - OUT - DISCARD).
+function stockMismatches() {
+  const rows = db.prepare(`
+    SELECT p.id, p.name, p.unit, p.stock,
+      COALESCE(SUM(CASE WHEN t.type IN ('IN','ADJUST') THEN t.qty WHEN t.type IN ('OUT','DISCARD') THEN -t.qty ELSE 0 END), 0) AS log_total
+    FROM products p LEFT JOIN transactions t ON t.product_id = p.id
+    GROUP BY p.id ORDER BY p.name`).all();
+  return rows
+    .map((r) => ({ ...r, log_total: roundQty(r.log_total), difference: roundQty(r.stock - r.log_total) }))
+    .filter((r) => r.difference !== 0);
+}
+
+app.get("/api/stock-check", requireAuth, requireAdmin, (req, res) => {
+  res.json(stockMismatches());
+});
+
+// Accepts the live stock as correct and adds one ADJUST entry per product so
+// the movement log matches it. Stock itself is not changed — if the live
+// number is what's wrong, edit it in Products instead.
+app.post("/api/stock-check/align", requireAuth, requireAdmin, (req, res) => {
+  const { productIds } = req.body || {};
+  const targets = stockMismatches().filter((r) => !Array.isArray(productIds) || productIds.includes(r.id));
+  const insert = db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, timestamp) VALUES (?,?,?,?,?,?,?,?)");
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const r of targets) insert.run(genId("txn"), r.id, "ADJUST", r.difference, req.agent.name, null, 0, now);
+  })();
+  if (targets.length) logVoid("edit", "transaction", null, `Stock check: added ${targets.length} adjustment entr${targets.length === 1 ? "y" : "ies"} to match live stock`, targets, req.agent.name);
+  res.json({ ok: true, aligned: targets.length });
 });
 
 /* ---------------- Void log (audit trail of edits and deletes) ---------------- */
