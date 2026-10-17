@@ -139,7 +139,12 @@ function statusLabel(status) {
 function movementTone(type) {
   if (type === "IN") return "in";
   if (type === "OUT") return "out";
+  if (type === "ADJUST") return "default";
   return "waste"; // DISCARD
+}
+// ADJUST entries carry a signed qty (+ added, - removed); show the sign.
+function fmtMovementQty(t) {
+  return t.type === "ADJUST" && t.qty > 0 ? `+${t.qty}` : String(t.qty);
 }
 
 /* ---------------------------------------------------------------
@@ -528,6 +533,75 @@ function BarcodeDivider() {
   );
 }
 
+/* Admin-only stock check: lists products whose live stock doesn't equal
+   what their movement log adds up to, and can add ADJUST entries so the
+   log matches the live (counted) stock. Re-checks whenever the log changes. */
+function StockCheckCard({ transactions, showToast }) {
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try {
+      setRows(await api.getStockCheck());
+    } catch (err) {
+      setRows([]);
+      showToast(err.message, "out");
+    }
+  }
+  useEffect(() => { load(); }, [transactions.length]);
+
+  async function alignAll() {
+    if (!window.confirm(`Treat the current stock as correct and add ${rows.length} adjustment entr${rows.length === 1 ? "y" : "ies"} so the movement log matches?\n\nStock levels won't change. If a stock number itself is wrong, fix it in Products instead.`)) return;
+    setBusy(true);
+    try {
+      const res = await api.alignStock(rows.map((r) => r.id));
+      showToast(`Added ${res.aligned} adjustment entr${res.aligned === 1 ? "y" : "ies"} \u2014 reload to see them in the log`, "in");
+      await load();
+    } catch (err) {
+      showToast(err.message, "out");
+    }
+    setBusy(false);
+  }
+
+  if (rows === null) return null;
+  return (
+    <Card style={{ marginBottom: 24, borderColor: rows.length ? T.amber : T.border }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: rows.length ? 12 : 0 }}>
+        <div>
+          <div style={{ ...fontDisplay, fontSize: 14, fontWeight: 700, color: rows.length ? T.amber : T.text }}>Stock check</div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 4 }}>
+            {rows.length === 0
+              ? "Every product's stock matches its movement log."
+              : `${rows.length} product${rows.length === 1 ? "" : "s"} where stock doesn't match the movement log.`}
+          </div>
+        </div>
+        {rows.length > 0 && <Button variant="ghost" disabled={busy} onClick={alignAll}>{busy ? "Aligning\u2026" : "Align log to current stock"}</Button>}
+      </div>
+      {rows.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr>{["Product", "Live stock", "Log adds up to", "Difference"].map((h) => (
+                <th key={h} style={{ textAlign: "left", padding: "6px 10px", ...fontMono, fontSize: 10, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${T.border}` }}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                  <td style={{ padding: "8px 10px", color: T.text }}>{r.name}</td>
+                  <td style={{ padding: "8px 10px", ...fontMono }}>{r.stock} {r.unit || "pcs"}</td>
+                  <td style={{ padding: "8px 10px", ...fontMono, color: T.textMuted }}>{r.log_total}</td>
+                  <td style={{ padding: "8px 10px", ...fontMono, color: T.amber }}>{r.difference > 0 ? `+${r.difference}` : r.difference}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /* Admin-only control to permanently purge movement history before a chosen
    date. Shared between the Dashboard and Movement log views. */
 function DangerZoneCard({ transactions, onDeleteRange }) {
@@ -579,7 +653,11 @@ function DangerZoneCard({ transactions, onDeleteRange }) {
 
   async function handleDelete() {
     setBusy(true);
-    const params = mode === "all" ? { all: "true" } : { after: range.after, before: range.before };
+    // Send exact local-midnight instants. A bare "2026-10-16" is read as UTC
+    // midnight on the server, which is 8am here \u2014 that shifted the deleted
+    // window by 8 hours and didn't match the preview count.
+    const toInstant = (d) => new Date(d + "T00:00:00").toISOString();
+    const params = mode === "all" ? { all: "true" } : { after: toInstant(range.after), before: toInstant(range.before) };
     const ok = await onDeleteRange(params);
     setBusy(false);
     if (ok) reset();
@@ -592,7 +670,7 @@ function DangerZoneCard({ transactions, onDeleteRange }) {
         <div style={{ ...fontDisplay, fontSize: 14, fontWeight: 700, color: T.out }}>Danger zone</div>
       </div>
       <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
-        {"Permanently deletes movement history \u2014 useful for clearing out old test data. This does not change current stock levels, only the historical log and the dashboard's totals/chart. Every delete here is recorded in the Void log."}
+        {"Permanently deletes movement history \u2014 useful for clearing out old test data. This does not change current stock levels, only the historical log and the dashboard's totals/chart, so afterwards the Stock check will list those products until you align them. Every delete here is recorded in the Void log."}
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
@@ -809,6 +887,9 @@ export default function App() {
     try {
       const created = await api.addProduct(prod);
       setProducts((p) => [...p, created].sort((a, b) => a.name.localeCompare(b.name)));
+      // Opening stock is logged as a "Product in" entry on the server
+      const state = await api.getState();
+      setTransactions(state.transactions);
       showToast("Product added to inventory", "in");
     } catch (err) {
       showToast(err.message, "out");
@@ -819,6 +900,9 @@ export default function App() {
     try {
       const updated = await api.editProduct(id, prod);
       setProducts((prev) => prev.map((p) => (p.id === id ? updated : p)));
+      // A stock change is logged as an ADJUST entry on the server
+      const state = await api.getState();
+      setTransactions(state.transactions);
       showToast(`${updated.name} updated`, "in");
       return true;
     } catch (err) {
@@ -865,9 +949,10 @@ export default function App() {
 
   async function deleteTransaction(id) {
     try {
-      await api.deleteTransaction(id);
+      const res = await api.deleteTransaction(id);
       setTransactions((prev) => prev.filter((t) => t.id !== id));
-      showToast("Entry deleted", "out");
+      if (res.product) setProducts((prev) => prev.map((p) => (p.id === res.product.id ? res.product : p)));
+      showToast("Entry deleted \u2014 stock updated to match", "out");
       return true;
     } catch (err) {
       showToast(err.message, "out");
@@ -1177,8 +1262,9 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
   );
 
   const totalSalesRevenue = totalRetailSales + totalMarketSales;
-  // What came back from the stock invested this period, after subtracting
-  // what was lost/discarded — the actual return on the money put into stock.
+  // What came back from the stock invested this period. Discards are NOT
+  // subtracted: they're logged at purchase price, so their cost is already
+  // inside Stock invested (subtracting again would count the loss twice).
   const netFromInvestment = totalSalesRevenue - totalStockInvested;
 
   const stats = [
@@ -1235,6 +1321,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
         ))}
       </div>
 
+      {isAdmin && <StockCheckCard transactions={transactions} showToast={showToast} />}
 
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
@@ -1304,7 +1391,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
                     <span style={{ fontSize: 13, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p ? p.name : "Unknown product"}</span>
                     <span style={{ fontSize: 11, color: T.textFaint }}>{t.staff}</span>
                   </div>
-                  <Badge tone={movementTone(t.type)}>{t.type} {t.qty}</Badge>
+                  <Badge tone={movementTone(t.type)}>{t.type} {fmtMovementQty(t)}</Badge>
                 </div>
               );
             })}
@@ -1792,7 +1879,16 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
     if (dateTo && tTime > new Date(dateTo + "T23:59:59.999").getTime()) return false;
     return true;
   });
-  const filteredTotal = filteredTxns.reduce((s, t) => s + t.price * t.qty, 0);
+  // Money totals per kind. Adding stock-in cost, sales and write-offs into a
+  // single number gave a figure that matched nothing on the dashboard, so
+  // the "ALL" view shows each one separately. ADJUST entries carry no value.
+  const sumOf = (pred) => filteredTxns.filter(pred).reduce((s, t) => s + t.price * t.qty, 0);
+  const filteredTotal = filterType === "ALL" || filterType === "ADJUST" ? null : sumOf(() => true);
+  const allTotals = [
+    { label: "In (cost)", value: sumOf((t) => t.type === "IN") },
+    { label: "Sales", value: sumOf((t) => t.type === "OUT") },
+    { label: "Discarded", value: sumOf((t) => t.type === "DISCARD") },
+  ];
 
   const typeLabels = {
     IN: { verb: "Received by", action: "Log stock in", button: "in" },
@@ -1867,6 +1963,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
               { key: "OUT_RETAIL", label: "OUT \u00b7 RETAIL" },
               { key: "OUT_MARKET", label: "OUT \u00b7 MARKET" },
               { key: "DISCARD", label: "DISCARD" },
+              { key: "ADJUST", label: "ADJUST" },
             ].map(({ key, label }) => (
               <button key={key} onClick={() => setFilterType(key)} style={{
                 ...fontMono, fontSize: 11, padding: "5px 10px", borderRadius: 3, cursor: "pointer",
@@ -1914,8 +2011,23 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
           {dateFrom ? ` from ${dateFrom}` : ""}{dateTo ? ` to ${dateTo}` : ""}
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span style={{ ...fontMono, fontSize: 11, color: T.textFaint, letterSpacing: "0.06em", textTransform: "uppercase" }}>Total</span>
-          <span style={{ ...fontDisplay, fontSize: 22, fontWeight: 700, color: T.amber }}>{fmtMoney(filteredTotal)}</span>
+          {filteredTotal !== null ? (
+            <>
+              <span style={{ ...fontMono, fontSize: 11, color: T.textFaint, letterSpacing: "0.06em", textTransform: "uppercase" }}>Total</span>
+              <span style={{ ...fontDisplay, fontSize: 22, fontWeight: 700, color: T.amber }}>{fmtMoney(filteredTotal)}</span>
+            </>
+          ) : filterType === "ADJUST" ? (
+            <span style={{ fontSize: 12, color: T.textFaint }}>Adjustments are count corrections and carry no money value</span>
+          ) : (
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+              {allTotals.map((x) => (
+                <div key={x.label} style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ ...fontMono, fontSize: 10, color: T.textFaint, letterSpacing: "0.06em", textTransform: "uppercase" }}>{x.label}</span>
+                  <span style={{ ...fontDisplay, fontSize: 17, fontWeight: 700, color: T.amber }}>{fmtMoney(x.value)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1944,7 +2056,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
                     )}
                   </td>
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.text }}>{p ? p.name : "Deleted product"}</td>
-                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{t.qty} {p ? (p.unit || "pcs") : ""}</td>
+                  <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.text }}>{fmtMovementQty(t)} {p ? (p.unit || "pcs") : ""}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 13, color: T.textMuted }}>
                     {fmtMoney(t.price)}
                     {t.market_price != null && (
@@ -2036,7 +2148,8 @@ function PosView({ products, staffName, onLog, isMobile }) {
   function setRowPriceType(index, type) {
     setCart((prev) => prev.map((r, idx) => {
       if (idx !== index) return r;
-      const price = type === "market" ? (r.marketPrice ?? r.retailPrice) : r.retailPrice;
+      if (type === "market" && r.marketPrice == null) return r; // no market price to switch to
+      const price = type === "market" ? r.marketPrice : r.retailPrice;
       return { ...r, priceType: type, unitPrice: price };
     }));
   }
@@ -2257,8 +2370,10 @@ function PosView({ products, staffName, onLog, isMobile }) {
                                 </button>
                                 <button
                                   onClick={() => setRowPriceType(i, "market")}
+                                  disabled={row.marketPrice == null}
+                                  title={row.marketPrice == null ? "No market price set for this product" : undefined}
                                   style={{
-                                    ...fontMono, fontSize: 9, padding: "2px 6px", borderRadius: 3, cursor: "pointer",
+                                    ...fontMono, fontSize: 9, padding: "2px 6px", borderRadius: 3, cursor: row.marketPrice == null ? "not-allowed" : "pointer", opacity: row.marketPrice == null ? 0.35 : 1,
                                     background: row.priceType === "market" ? T.amberDim : "transparent",
                                     color: row.priceType === "market" ? T.amberText : T.textFaint,
                                     border: `1px solid ${row.priceType === "market" ? T.amber : T.border}`,
