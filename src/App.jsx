@@ -590,8 +590,8 @@ function StockCheckCard({ transactions, showToast }) {
                 <tr key={r.id} style={{ borderBottom: `1px solid ${T.border}` }}>
                   <td style={{ padding: "8px 10px", color: T.text }}>{r.name}</td>
                   <td style={{ padding: "8px 10px", ...fontMono }}>{r.stock} {r.unit || "pcs"}</td>
-                  <td style={{ padding: "8px 10px", ...fontMono, color: T.textMuted }}>{r.log_total}</td>
-                  <td style={{ padding: "8px 10px", ...fontMono, color: T.amber }}>{r.difference > 0 ? `+${r.difference}` : r.difference}</td>
+                  <td style={{ padding: "8px 10px", ...fontMono, color: T.textMuted }}>{r.log_total} {r.unit || "pcs"}</td>
+                  <td style={{ padding: "8px 10px", ...fontMono, color: T.amber }}>{r.difference > 0 ? `+${r.difference}` : r.difference} {r.unit || "pcs"}</td>
                 </tr>
               ))}
             </tbody>
