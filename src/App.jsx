@@ -1179,7 +1179,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
   const totalSalesRevenue = totalRetailSales + totalMarketSales;
   // What came back from the stock invested this period, after subtracting
   // what was lost/discarded — the actual return on the money put into stock.
-  const netFromInvestment = totalSalesRevenue - totalStockInvested - totalDiscarded;
+  const netFromInvestment = totalSalesRevenue - totalStockInvested;
 
   const stats = [
     { label: statsMode === "all" ? "Stock invested (all time)" : `Stock invested (${periodLabelText})`, value: fmtMoney(totalStockInvested) },
