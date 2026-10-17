@@ -24,19 +24,33 @@ export function clearSession() {
 
 async function request(path, options = {}) {
   const token = getToken();
-  const res = await fetch(`/api${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-  });
+  let res;
+  try {
+    res = await fetch(`/api${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+  } catch {
+    // No response at all = no connection (or the server is unreachable).
+    const err = new Error("You're offline \u2014 this needs an internet connection. Sales and stock movements still work offline.");
+    err.offline = true;
+    throw err;
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) clearSession();
     const err = new Error(data.error || "Something went wrong");
     err.status = res.status;
+    // 502/503/504 come from Railway while the server is restarting or down
+    // \u2014 treat them like no connection so queued entries wait and retry.
+    if (res.status >= 502 && res.status <= 504) {
+      err.offline = true;
+      err.message = "Server unreachable right now \u2014 sales and stock movements still work offline.";
+    }
     throw err;
   }
   return data;

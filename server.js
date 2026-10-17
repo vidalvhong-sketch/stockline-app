@@ -163,6 +163,13 @@ if (!txnCols.includes("customer_name")) {
   console.log("Migrated transactions table: added customer_name column.");
 }
 
+// Migration: mark entries that were recorded on a device while it was
+// offline and sent in later, so they can be told apart in the log.
+if (!txnCols.includes("offline")) {
+  db.exec("ALTER TABLE transactions ADD COLUMN offline INTEGER NOT NULL DEFAULT 0");
+  console.log("Migrated transactions table: added offline column.");
+}
+
 // Backfill price_type on historical sales logged before this was tracked.
 // The old code always stored market_price as a reference on every sale
 // regardless of what was actually charged, so we can recover which price
@@ -463,16 +470,35 @@ app.delete("/api/products/:id", requireAuth, requireAdmin, (req, res) => {
 
 /* ---------------- Transactions (product in / out / discard) ---------------- */
 app.post("/api/transactions", requireAuth, (req, res) => {
-  const { productId, type, qty, staff, supplierId, price, marketPrice, priceType, customerName, timestamp } = req.body || {};
+  const { id: clientId, productId, type, qty, staff, supplierId, price, marketPrice, priceType, customerName, timestamp, offline } = req.body || {};
+  // The device creates each entry's ID, so a retry (lost connection, or the
+  // offline outbox re-sending) can't record the same movement twice: if we
+  // already have this ID, just return what was saved the first time.
+  if (clientId !== undefined && !(typeof clientId === "string" && /^txn_[a-z0-9]{6,40}$/.test(clientId))) {
+    return res.status(400).json({ error: "Invalid entry ID" });
+  }
+  if (clientId) {
+    const existing = db.prepare("SELECT * FROM transactions WHERE id = ?").get(clientId);
+    if (existing) {
+      return res.json({ transaction: existing, product: db.prepare("SELECT * FROM products WHERE id = ?").get(existing.product_id), duplicate: true });
+    }
+  }
+  const isOffline = offline === true;
   if (!productId || !type || !qty || !staff) return res.status(400).json({ error: "Product, quantity, and staff name are required" });
   if (!["IN", "OUT", "DISCARD"].includes(type)) return res.status(400).json({ error: "Invalid movement type" });
   const product = db.prepare("SELECT * FROM products WHERE id = ?").get(productId);
   if (!product) return res.status(404).json({ error: "Product not found" });
   const quantity = roundQty(Number(qty));
-  if ((type === "OUT" || type === "DISCARD") && quantity > product.stock) {
+  if (!(quantity > 0)) return res.status(400).json({ error: "Quantity must be more than 0" });
+  // A sale or write-off made offline already happened in real life (the
+  // customer paid, the item is gone), so it's always accepted when it syncs
+  // \u2014 even if another device sold the same stock in the meantime. Stock can
+  // then dip below zero, which shows up as a product to recount.
+  if (!isOffline && (type === "OUT" || type === "DISCARD") && quantity > product.stock) {
     return res.status(400).json({ error: `Not enough stock \u2014 only ${product.stock} left` });
   }
-  const id = genId("txn");
+  const id = clientId || genId("txn");
+  if (timestamp && isNaN(new Date(timestamp).getTime())) return res.status(400).json({ error: "Invalid date/time" });
   const ts = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
   const unitPrice = price !== undefined && price !== ""
     ? Number(price)
@@ -489,8 +515,8 @@ app.post("/api/transactions", requireAuth, (req, res) => {
   // price — otherwise it was charged at retail and belongs in Retail sales.
   const priceTypeValue = type === "OUT" ? (priceType === "market" && product.market_price != null ? "market" : "retail") : null;
   const customerNameValue = type === "OUT" && customerName && String(customerName).trim() ? String(customerName).trim() : null;
-  db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, market_price, price_type, customer_name, timestamp) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, marketPriceValue, priceTypeValue, customerNameValue, ts);
+  db.prepare("INSERT INTO transactions (id, product_id, type, qty, staff, supplier_id, price, market_price, price_type, customer_name, timestamp, offline) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, productId, type, quantity, staff, type === "IN" ? (supplierId || null) : null, unitPrice, marketPriceValue, priceTypeValue, customerNameValue, ts, isOffline ? 1 : 0);
   const newStock = roundQty(type === "IN" ? product.stock + quantity : product.stock - quantity);
   db.prepare("UPDATE products SET stock = ? WHERE id = ?").run(newStock, productId);
   res.json({

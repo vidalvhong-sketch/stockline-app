@@ -6,10 +6,15 @@ import {
   LayoutDashboard, Package, Truck, ArrowLeftRight, ScanBarcode, Plus, X,
   ArrowDownToLine, ArrowUpFromLine, Ban, RotateCcw, Search, AlertTriangle, CheckCircle2, LogOut,
   Users, KeyRound, Trash2, ShieldCheck, Pencil, Receipt, Minus, Palette, Download, ChevronDown, ChevronUp, Bluetooth, ArrowUpDown,
+  WifiOff, RefreshCw,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import { api, getToken, getAgentName, getAgentRole, setSession, clearSession } from "./api.js";
+import {
+  loadCachedState, saveCachedState, getOutbox, addToOutbox, removeFromOutbox,
+  getSyncFailures, addSyncFailure, clearSyncFailures, newTxnId, applyPending, toLocalTxn,
+} from "./offline.js";
 
 /* ---------------------------------------------------------------
    THEME — "warehouse control panel", with 5 selectable palettes
@@ -533,6 +538,59 @@ function BarcodeDivider() {
   );
 }
 
+/* Floating sync status: shows when offline, when entries are waiting to be
+   sent, while syncing, and when the server refused something. Hidden when
+   everything is online and synced. */
+function SyncStatus({ online, pendingCount, syncing, savedAt, failures, products, onSync, onDismissFailures, bottom }) {
+  const [open, setOpen] = useState(false);
+  if (online && !pendingCount && !syncing && !failures.length) return null;
+  const color = failures.length ? T.out : !online ? T.amber : T.textMuted;
+  let text;
+  if (syncing) text = `Syncing ${pendingCount}\u2026`;
+  else if (!online) text = pendingCount ? `Offline \u2014 ${pendingCount} waiting to sync` : "Offline";
+  else if (pendingCount) text = `${pendingCount} waiting to sync`;
+  else text = `${failures.length} couldn't sync`;
+  const name = (id) => (products.find((p) => p.id === id) || {}).name || "Deleted product";
+
+  return (
+    <div style={{ position: "fixed", right: 16, bottom, zIndex: 25, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, maxWidth: "calc(100vw - 32px)" }}>
+      {open && (
+        <Card style={{ width: 320, maxWidth: "100%", padding: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
+          <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.6 }}>
+            {online ? "Connected." : "No internet. Sales, stock-ins, discards and scanner batches are saved on this device and sent automatically when the connection is back."}
+            {savedAt && <div style={{ color: T.textFaint, marginTop: 4 }}>{`Offline copy saved ${fmtDateTime(savedAt)}`}</div>}
+            {!online && <div style={{ color: T.textFaint, marginTop: 4 }}>{"Adding or editing products, suppliers and agents needs a connection."}</div>}
+          </div>
+          {failures.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: T.out, fontWeight: 600, marginBottom: 6 }}>{"These were refused by the server and were not recorded:"}</div>
+              {failures.map((f) => (
+                <div key={f.id} style={{ fontSize: 12, color: T.text, borderTop: `1px solid ${T.border}`, padding: "6px 0" }}>
+                  {`${f.type} ${f.qty} \u00b7 ${name(f.productId)} \u00b7 ${fmtDateTime(f.timestamp)}`}
+                  <div style={{ color: T.textFaint, fontSize: 11 }}>{f.error}</div>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: T.textFaint, margin: "6px 0 8px" }}>{"Re-enter them by hand if they really happened, then dismiss this list."}</div>
+              <Button variant="ghost" onClick={onDismissFailures}>Dismiss</Button>
+            </div>
+          )}
+          {online && pendingCount > 0 && !syncing && (
+            <div style={{ marginTop: 10 }}><Button variant="ghost" onClick={onSync}><RefreshCw size={13} />Sync now</Button></div>
+          )}
+        </Card>
+      )}
+      <button onClick={() => setOpen((o) => !o)} style={{
+        display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 20, cursor: "pointer",
+        background: T.surfaceRaised, border: `1px solid ${color}`, color, ...fontMono, fontSize: 11,
+        boxShadow: "0 4px 14px rgba(0,0,0,0.3)",
+      }}>
+        {syncing ? <RefreshCw size={13} /> : !online ? <WifiOff size={13} /> : <AlertTriangle size={13} />}
+        {text}
+      </button>
+    </div>
+  );
+}
+
 /* Admin-only stock check: lists products whose live stock doesn't equal
    what their movement log adds up to, and can add ADJUST entries so the
    log matches the live (counted) stock. Re-checks whenever the log changes. */
@@ -544,6 +602,7 @@ function StockCheckCard({ transactions, showToast }) {
     try {
       setRows(await api.getStockCheck());
     } catch (err) {
+      if (err.offline) { setRows(null); return; } // needs the server; hide while offline
       setRows([]);
       showToast(err.message, "out");
     }
@@ -820,24 +879,135 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [loadError, setLoadError] = useState("");
 
+  // Offline / sync status
+  const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const [syncFailures, setSyncFailures] = useState([]);
+  const [savedAt, setSavedAt] = useState(null); // when the offline copy was last downloaded
+  const syncingRef = useRef(false);
+
   const isAdmin = role === "admin";
+
+  function applyState(state) {
+    setProducts(state.products);
+    setSuppliers(state.suppliers);
+    setTransactions(state.transactions);
+  }
+
+  // Loads fresh data from the server, with anything still waiting in the
+  // outbox laid on top. Returns false if the server couldn't be reached.
+  async function refreshFromServer() {
+    const state = await api.getState();
+    const outbox = await getOutbox();
+    applyState(applyPending(state, outbox));
+    setRole(state.role);
+    setPendingCount(outbox.length);
+    setSavedAt(new Date().toISOString());
+    return true;
+  }
 
   useEffect(() => {
     if (!agentName) return;
     (async () => {
       try {
-        const state = await api.getState();
-        setProducts(state.products);
-        setSuppliers(state.suppliers);
-        setTransactions(state.transactions);
-        setRole(state.role);
+        await refreshFromServer();
+        setOnline(true);
         setReady(true);
       } catch (err) {
-        setLoadError(err.message);
-        if (!getToken()) setAgentName(null);
+        if (err.offline) {
+          // No connection: open with the copy saved on this device.
+          const cached = await loadCachedState();
+          if (cached && cached.products) {
+            const outbox = await getOutbox();
+            applyState(applyPending(cached, outbox));
+            setPendingCount(outbox.length);
+            setSavedAt(cached.savedAt || null);
+            setOnline(false);
+            setReady(true);
+          } else {
+            setLoadError("You're offline and this device has no saved copy yet. Connect to the internet once so STOCKLINE can download your inventory, then it will work offline.");
+          }
+        } else {
+          setLoadError(err.message);
+          if (!getToken()) setAgentName(null);
+        }
       }
+      setSyncFailures(await getSyncFailures());
     })();
   }, [agentName]);
+
+  // Keep the on-device copy up to date with whatever is on screen, so the
+  // app can reopen offline with the latest stock and movement log.
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(() => saveCachedState({ products, suppliers, transactions }), 400);
+    return () => clearTimeout(t);
+  }, [ready, products, suppliers, transactions]);
+
+  // Sends queued entries to the server, oldest first.
+  async function syncNow() {
+    if (syncingRef.current || !getToken()) return;
+    const outbox = await getOutbox();
+    if (!outbox.length) {
+      setPendingCount(0);
+      return;
+    }
+    syncingRef.current = true;
+    setSyncing(true);
+    let sent = 0, failed = 0, stoppedOffline = false;
+    for (const entry of outbox) {
+      try {
+        await api.logTransaction({ ...entry, offline: true });
+        await removeFromOutbox(entry.id);
+        sent++;
+      } catch (err) {
+        if (err.offline) { stoppedOffline = true; break; }
+        if (err.status === 401) {
+          // Session expired: keep everything queued, ask to log in again.
+          showToast("Log in again to finish syncing \u2014 nothing was lost", "out");
+          logout();
+          break;
+        }
+        // The server refused this entry (e.g. its product was deleted).
+        // Set it aside so it doesn't block the rest of the queue.
+        await addSyncFailure(entry, err.message);
+        await removeFromOutbox(entry.id);
+        failed++;
+      }
+    }
+    setOnline(!stoppedOffline);
+    if (sent || failed) {
+      try { await refreshFromServer(); } catch { /* still shows local copy */ }
+      if (sent) showToast(`Synced ${sent} offline ${sent === 1 ? "entry" : "entries"}`, "in");
+    }
+    setPendingCount((await getOutbox()).length);
+    setSyncFailures(await getSyncFailures());
+    syncingRef.current = false;
+    setSyncing(false);
+  }
+
+  // Sync when the connection comes back, on start, and every 20 seconds
+  // while anything is waiting (browsers don't always fire "online").
+  useEffect(() => {
+    if (!ready) return;
+    const goOnline = () => { setOnline(true); syncNow(); };
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    syncNow();
+    const timer = setInterval(() => { if (navigator.onLine) syncNow(); }, 20000);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+      clearInterval(timer);
+    };
+  }, [ready]);
+
+  async function dismissSyncFailures() {
+    await clearSyncFailures();
+    setSyncFailures([]);
+  }
 
   function showToast(msg, tone = "default") {
     setToast({ msg, tone });
@@ -960,7 +1130,39 @@ export default function App() {
     }
   }
 
-  async function logMovement(entry) {
+  async function logMovement(rawEntry) {
+    // Give every movement its ID and final price here on the device, so the
+    // exact same entry can be sent now or later from the offline queue.
+    const product = products.find((p) => p.id === rawEntry.productId);
+    if (!product) return { ok: false, error: "Product not found" };
+    const qty = Math.round((Number(rawEntry.qty) + Number.EPSILON) * 1000) / 1000;
+    const hasPrice = rawEntry.price !== undefined && rawEntry.price !== "" && !Number.isNaN(Number(rawEntry.price));
+    const entry = {
+      ...rawEntry,
+      id: newTxnId(),
+      qty,
+      price: hasPrice ? Number(rawEntry.price) : (rawEntry.type === "OUT" ? product.retail_price : product.purchase_price),
+      priceType: rawEntry.type === "OUT" ? (rawEntry.priceType === "market" && product.market_price != null ? "market" : "retail") : undefined,
+      marketPrice: rawEntry.type === "OUT" ? (rawEntry.marketPrice ?? product.market_price ?? null) : undefined,
+      timestamp: rawEntry.timestamp || new Date().toISOString(),
+    };
+
+    function queueOffline() {
+      if ((entry.type === "OUT" || entry.type === "DISCARD") && qty > product.stock) {
+        const msg = `Not enough stock \u2014 only ${product.stock} left`;
+        showToast(msg, "out");
+        return { ok: false, error: msg };
+      }
+      addToOutbox(entry).then((box) => setPendingCount(box.length));
+      const newStock = Math.round((product.stock + (entry.type === "IN" ? qty : -qty)) * 1000) / 1000;
+      setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, stock: newStock } : p)));
+      setTransactions((t) => [...t, toLocalTxn(entry)].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
+      setOnline(false);
+      showToast("Saved offline \u2014 will sync when the internet is back", "default");
+      return { ok: true, offline: true };
+    }
+
+    if (!navigator.onLine) return queueOffline();
     try {
       const res = await api.logTransaction(entry);
       // Insert in timestamp order (not just prepended) so backdated entries
@@ -976,6 +1178,7 @@ export default function App() {
       // reads as 18 unrelated errors instead of 1 session expiry. Flag it so
       // the caller can stop immediately, and force a clean logout so the
       // person gets a real "log in again" prompt instead of a dead session.
+      if (err.offline) return queueOffline();
       if (err.status === 401) {
         showToast("Session expired — please log in again", "out");
         logout();
@@ -1041,6 +1244,14 @@ export default function App() {
     </div>
   );
 
+  const syncEl = (
+    <SyncStatus
+      online={online} pendingCount={pendingCount} syncing={syncing} savedAt={savedAt}
+      failures={syncFailures} products={products} onSync={syncNow} onDismissFailures={dismissSyncFailures}
+      bottom={isMobile ? 70 : 16}
+    />
+  );
+
   if (isMobile) {
     return (
       <div className={themeKey === "elderly" ? "theme-elderly" : ""} style={{ background: T.bg, minHeight: "100vh", ...fontBody }}>
@@ -1079,6 +1290,7 @@ export default function App() {
         )}
 
         {toastEl}
+        {syncEl}
 
         {/* Content */}
         <div style={{ paddingTop: 68, paddingBottom: 76, paddingLeft: 14, paddingRight: 14 }}>
@@ -1172,6 +1384,7 @@ export default function App() {
 
       <div style={{ flex: 1, padding: 28, minWidth: 0, position: "relative" }}>
         {toastEl}
+        {syncEl}
         {mainContent}
       </div>
     </div>
@@ -1197,7 +1410,7 @@ function Dashboard({ products, transactions, suppliers, isAdmin, onDeleteRange, 
 
   const activeProducts = products.filter((p) => p.status === "active");
   const lowStock = activeProducts.filter((p) => p.stock > 0 && p.stock <= 10);
-  const outOfStock = activeProducts.filter((p) => p.stock === 0);
+  const outOfStock = activeProducts.filter((p) => p.stock <= 0);
 
   const findProduct = (t) => products.find((pp) => pp.id === (t.product_id || t.productId));
 
@@ -2049,6 +2262,12 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
                 <tr key={t.id} style={{ borderBottom: `1px solid ${T.border}` }}>
                   <td style={{ padding: "10px 16px" }}>
                     <Badge tone={movementTone(t.type)}>{t.type}</Badge>
+                    {t.pending && (
+                      <div style={{ fontSize: 9, color: T.amber, marginTop: 3, ...fontMono, letterSpacing: "0.04em" }}>WAITING TO SYNC</div>
+                    )}
+                    {!t.pending && t.offline === 1 && (
+                      <div style={{ fontSize: 9, color: T.textFaint, marginTop: 3, ...fontMono, letterSpacing: "0.04em" }}>OFFLINE SALE</div>
+                    )}
                     {t.type === "OUT" && t.price_type && (
                       <div style={{ fontSize: 9, color: t.price_type === "market" ? T.amber : T.textFaint, marginTop: 3, ...fontMono, letterSpacing: "0.04em" }}>
                         {t.price_type.toUpperCase()}
@@ -2069,7 +2288,7 @@ function MovementView({ products, suppliers, transactions, onLog, defaultStaff, 
                   <td style={{ padding: "10px 16px", fontSize: 13, color: T.textMuted }}>{t.staff}</td>
                   <td style={{ padding: "10px 16px", ...fontMono, fontSize: 12, color: T.textFaint }}>{fmtDateTime(t.timestamp)}</td>
                   <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                    {isAdmin && (
+                    {isAdmin && !t.pending && (
                       <button
                         onClick={() => {
                           const p = products.find((pp) => pp.id === t.product_id);
